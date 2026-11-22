@@ -1,0 +1,3 @@
+com.shop.support.kafka.KafkaSupportAutoConfiguration
+com.shop.support.outbox.OutboxAutoConfiguration
+com.shop.support.web.WebSupportAutoConfiguration

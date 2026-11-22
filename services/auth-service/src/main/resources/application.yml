@@ -1,0 +1,33 @@
+server:
+  port: ${PORT:8081}
+
+spring:
+  application:
+    name: auth-service
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/auth_db}
+    username: ${DB_USER:shop}
+    password: ${DB_PASSWORD:shop}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: update
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:9094}
+    producer:
+      acks: all
+
+shop:
+  jwt:
+    # Bắt buộc ghi đè bằng biến môi trường JWT_SECRET khi triển khai thật (>= 32 ký tự)
+    secret: ${JWT_SECRET:change-me-please-this-is-a-dev-only-secret-0123456789}
+    ttl: ${JWT_TTL:PT8H}
+  seed:
+    enabled: ${SEED_DATA:true}
+    demo-customers: ${SEED_CUSTOMERS:50}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics

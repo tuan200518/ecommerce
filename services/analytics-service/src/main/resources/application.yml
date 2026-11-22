@@ -1,0 +1,45 @@
+server:
+  port: ${PORT:8089}
+
+spring:
+  application:
+    name: analytics-service
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/analytics_db}
+    username: ${DB_USER:shop}
+    password: ${DB_PASSWORD:shop}
+  sql:
+    init:
+      mode: always
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:9094}
+    consumer:
+      group-id: analytics-dashboard
+      auto-offset-reset: earliest
+    streams:
+      application-id: analytics-streams
+      properties:
+        # Đẩy kết quả ra gần như ngay lập tức (không gom cache) để Dashboard cập nhật realtime
+        commit.interval.ms: 1000
+        statestore.cache.max.bytes: 0
+        processing.guarantee: ${STREAMS_GUARANTEE:at_least_once}
+        num.stream.threads: 2
+        default.key.serde: org.apache.kafka.common.serialization.Serdes$StringSerde
+        default.value.serde: org.apache.kafka.common.serialization.Serdes$StringSerde
+      state-dir: ${STREAMS_STATE_DIR:/tmp/kafka-streams}
+  mvc:
+    async:
+      request-timeout: -1
+
+shop:
+  analytics:
+    order-spike-threshold-per-minute: ${ORDER_SPIKE_THRESHOLD:30}
+    payment-failure-threshold-per-minute: ${PAYMENT_FAILURE_THRESHOLD:5}
+    broadcast-interval-ms: 1000
+    kafka-monitor-interval-ms: 5000
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics

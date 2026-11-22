@@ -1,0 +1,37 @@
+server:
+  port: ${PORT:8091}
+
+spring:
+  application:
+    name: simulator-service
+  threads:
+    virtual:
+      enabled: true
+
+shop:
+  simulator:
+    gateway-url: ${GATEWAY_URL:http://localhost:8080}
+    # Tự chạy khi khởi động (docker compose bật sẵn để Dashboard luôn có dữ liệu)
+    autostart: ${SIMULATOR_AUTOSTART:false}
+    # Số phiên mua sắm bắt đầu mỗi phút (mỗi phiên = 1 khách vào web)
+    sessions-per-minute: ${SIMULATOR_SESSIONS_PER_MINUTE:20}
+    max-concurrent-sessions: 40
+    # Tỷ lệ (0..1)
+    browse-only-rate: 0.25        # chỉ xem rồi rời đi
+    cart-abandon-rate: 0.2        # bỏ giỏ hàng
+    payment-failure-rate: 0.05    # chọn MOCK_FAIL (thẻ bị từ chối)
+    cancel-rate: 0.05             # đặt xong rồi hủy
+    new-customer-rate: 0.03       # đăng ký tài khoản mới
+    wave: true                    # lưu lượng dao động theo hình sin (giờ cao điểm / thấp điểm)
+    auto-restock: true            # nhân viên kho ảo nhập hàng khi sắp hết
+    auto-fulfill: true            # nhân viên ảo chuyển đơn CONFIRMED → SHIPPING → DELIVERED
+    customer-count: ${SEED_CUSTOMERS:50}
+    customer-password: Customer@123
+    staff-email: warehouse@shop.local
+    staff-password: Manager@123
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info

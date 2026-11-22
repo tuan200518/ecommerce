@@ -1,0 +1,274 @@
+name: shop-platform
+
+# Cấu hình chung cho các microservice Spring Boot
+x-service: &service
+  build:
+    context: .
+    dockerfile: docker/service.Dockerfile
+  restart: unless-stopped
+  depends_on:
+    postgres:
+      condition: service_healthy
+    kafka:
+      condition: service_healthy
+
+x-service-env: &service-env
+  KAFKA_BOOTSTRAP: kafka:9092
+  DB_USER: ${POSTGRES_USER:-shop}
+  DB_PASSWORD: ${POSTGRES_PASSWORD:-shop}
+  JWT_SECRET: ${JWT_SECRET:-change-me-please-this-is-a-dev-only-secret-0123456789}
+  JAVA_OPTS: ${JAVA_OPTS:--Xms64m -Xmx320m -XX:+UseSerialGC}
+
+services:
+  # ------------------------------------------------------------------ Hạ tầng
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-shop}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-shop}
+      POSTGRES_DB: shop
+    ports:
+      # Cổng phía host là 5433 để không đụng PostgreSQL cài sẵn trên máy (5432)
+      - "${POSTGRES_HOST_PORT:-5433}:5432"
+    volumes:
+      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-shop}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7.4-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  kafka:
+    image: apache/kafka:3.9.0
+    hostname: kafka
+    ports:
+      - "9094:9094"
+    environment:
+      CLUSTER_ID: "q1Sh-9_ISia_zwGINzRvyQ"
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNAL://:9094
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,EXTERNAL://localhost:9094
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_NUM_PARTITIONS: 3
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 20
+      start_period: 15s
+
+  kafka-ui:
+    image: kafbat/kafka-ui:v1.0.0
+    ports:
+      - "8090:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: shop-local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+    depends_on:
+      kafka:
+        condition: service_healthy
+
+  # ------------------------------------------------------------------ Microservices
+  api-gateway:
+    build:
+      context: .
+      dockerfile: docker/service.Dockerfile
+      args:
+        SERVICE: api-gateway
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      JWT_SECRET: ${JWT_SECRET:-change-me-please-this-is-a-dev-only-secret-0123456789}
+      JAVA_OPTS: ${JAVA_OPTS:--Xms64m -Xmx320m -XX:+UseSerialGC}
+      CORS_ORIGINS: http://localhost:3000,http://localhost:5173
+      AUTH_SERVICE_URL: http://auth-service:8081
+      USER_SERVICE_URL: http://user-service:8082
+      PRODUCT_SERVICE_URL: http://product-service:8083
+      CART_SERVICE_URL: http://cart-service:8084
+      ORDER_SERVICE_URL: http://order-service:8085
+      INVENTORY_SERVICE_URL: http://inventory-service:8086
+      PAYMENT_SERVICE_URL: http://payment-service:8087
+      NOTIFICATION_SERVICE_URL: http://notification-service:8088
+      ANALYTICS_SERVICE_URL: http://analytics-service:8089
+      SIMULATOR_SERVICE_URL: http://simulator-service:8091
+
+  auth-service:
+    <<: *service
+    build:
+      context: .
+      dockerfile: docker/service.Dockerfile
+      args:
+        SERVICE: auth-service
+    environment:
+      <<: *service-env
+      DB_URL: jdbc:postgresql://postgres:5432/auth_db
+
+  user-service:
+    <<: *service
+    build:
+      context: .
+      dockerfile: docker/service.Dockerfile
+      args:
+        SERVICE: user-service
+    environment:
+      <<: *service-env
+      DB_URL: jdbc:postgresql://postgres:5432/user_db
+
+  product-service:
+    <<: *service
+    build:
+      context: .
+      dockerfile: docker/service.Dockerfile
+      args:
+        SERVICE: product-service
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      <<: *service-env
+      DB_URL: jdbc:postgresql://postgres:5432/product_db
+      REDIS_HOST: redis
+
+  cart-service:
+    <<: *service
+    build:
+      context: .
+      dockerfile: docker/service.Dockerfile
+      args:
+        SERVICE: cart-service
+    environment:
+      <<: *service-env
+      DB_URL: jdbc:postgresql://postgres:5432/cart_db
+
+  order-service:
+    <<: *service
+    build:
+      context: .
+      dockerfile: docker/service.Dockerfile
+      args:
+        SERVICE: order-service
+    environment:
+      <<: *service-env
+      DB_URL: jdbc:postgresql://postgres:5432/order_db
+      ORDER_TIMEOUT: ${ORDER_TIMEOUT:-PT2M}
+
+  inventory-service:
+    <<: *service
+    build:
+      context: .
+      dockerfile: docker/service.Dockerfile
+      args:
+        SERVICE: inventory-service
+    environment:
+      <<: *service-env
+      DB_URL: jdbc:postgresql://postgres:5432/inventory_db
+
+  payment-service:
+    <<: *service
+    build:
+      context: .
+      dockerfile: docker/service.Dockerfile
+      args:
+        SERVICE: payment-service
+    environment:
+      <<: *service-env
+      DB_URL: jdbc:postgresql://postgres:5432/payment_db
+      PAYMENT_FAILURE_RATE: ${PAYMENT_FAILURE_RATE:-0.1}
+      PAYMENT_DELAY_MS: ${PAYMENT_DELAY_MS:-50}
+
+  notification-service:
+    <<: *service
+    build:
+      context: .
+      dockerfile: docker/service.Dockerfile
+      args:
+        SERVICE: notification-service
+    environment:
+      <<: *service-env
+      DB_URL: jdbc:postgresql://postgres:5432/notification_db
+
+  analytics-service:
+    <<: *service
+    build:
+      context: .
+      dockerfile: docker/service.Dockerfile
+      args:
+        SERVICE: analytics-service
+    environment:
+      <<: *service-env
+      DB_URL: jdbc:postgresql://postgres:5432/analytics_db
+      ORDER_SPIKE_THRESHOLD: ${ORDER_SPIKE_THRESHOLD:-30}
+      PAYMENT_FAILURE_THRESHOLD: ${PAYMENT_FAILURE_THRESHOLD:-5}
+    volumes:
+      - streams-state:/tmp/kafka-streams
+
+  # Khách hàng ảo + nhân viên ảo: tạo lưu lượng mua sắm ngẫu nhiên liên tục qua API Gateway.
+  # Điều khiển tại http://localhost:3000/admin/simulator (tài khoản ADMIN).
+  simulator-service:
+    build:
+      context: .
+      dockerfile: docker/service.Dockerfile
+      args:
+        SERVICE: simulator-service
+    restart: unless-stopped
+    depends_on:
+      - api-gateway
+    environment:
+      GATEWAY_URL: http://api-gateway:8080
+      SIMULATOR_AUTOSTART: ${SIMULATOR_AUTOSTART:-true}
+      SIMULATOR_SESSIONS_PER_MINUTE: ${SIMULATOR_SESSIONS_PER_MINUTE:-20}
+      JAVA_OPTS: ${JAVA_OPTS:--Xms64m -Xmx320m -XX:+UseSerialGC}
+
+  # ------------------------------------------------------------------ Frontend (React build + Nginx, proxy /api → gateway)
+  frontend:
+    build:
+      context: ./frontend
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    depends_on:
+      - api-gateway
+
+  # ------------------------------------------------------------------ Kiểm thử tải (chỉ chạy khi gọi: docker compose --profile loadtest run k6 ...)
+  k6:
+    image: grafana/k6:0.54.0
+    profiles: ["loadtest"]
+    volumes:
+      - ./scripts/k6:/scripts:ro
+    environment:
+      BASE_URL: http://api-gateway:8080
+    entrypoint: ["k6"]
+    command: ["run", "/scripts/simulate-traffic.js"]
+
+volumes:
+  postgres-data:
+  kafka-data:
+  streams-state:
