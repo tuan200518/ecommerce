@@ -1,0 +1,40 @@
+server:
+  port: ${PORT:8096}
+
+spring:
+  application:
+    name: promotion-service
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/promotion_db}
+    username: ${DB_USER:shop}
+    password: ${DB_PASSWORD:shop}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: update
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:9094}
+    consumer:
+      group-id: promotion-service
+      auto-offset-reset: earliest
+    listener:
+      concurrency: 3
+    producer:
+      acks: all
+
+shop:
+  promotion:
+    # Bỏ qua OrderCreated cũ hơn mức này (lần chạy đầu đọc topic từ đầu – không giữ suất cho đơn đã xong từ lâu)
+    max-event-age: PT10M
+    seed-enabled: ${PROMOTION_SEED:true}
+    max-flash-sale-days: 30
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+
+logging:
+  level:
+    com.shop: INFO

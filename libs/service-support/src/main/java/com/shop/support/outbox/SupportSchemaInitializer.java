@@ -28,8 +28,11 @@ public class SupportSchemaInitializer implements InitializingBean {
                     created_at TIMESTAMP NOT NULL,
                     published_at TIMESTAMP NULL,
                     attempts INT NOT NULL DEFAULT 0,
-                    last_error VARCHAR(1000)
+                    last_error VARCHAR(1000),
+                    correlation_id VARCHAR(64)
                 )""");
+        // Bảng tạo từ phiên bản trước chưa có cột correlation_id
+        jdbc.execute("ALTER TABLE outbox_events ADD COLUMN IF NOT EXISTS correlation_id VARCHAR(64)");
         jdbc.execute("CREATE INDEX IF NOT EXISTS idx_outbox_pending ON outbox_events (published_at, id)");
         jdbc.execute("""
                 CREATE TABLE IF NOT EXISTS processed_events (

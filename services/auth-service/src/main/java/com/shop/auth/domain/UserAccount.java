@@ -11,6 +11,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.Table;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.LinkedHashSet;
 import java.util.Set;
@@ -45,6 +46,13 @@ public class UserAccount {
 
     private Instant lastLoginAt;
 
+    // Chống dò mật khẩu (thêm ở phiên bản 2.1 – cho phép NULL để ddl-auto=update thêm vào bảng đã có dữ liệu)
+    /** Số lần sai mật khẩu liên tiếp kể từ lần đăng nhập thành công gần nhất. */
+    private Integer failedLoginAttempts;
+
+    /** Tạm khóa đăng nhập tới thời điểm này. */
+    private Instant lockedUntil;
+
     protected UserAccount() {
     }
 
@@ -67,6 +75,37 @@ public class UserAccount {
 
     public void recordLogin() {
         this.lastLoginAt = Instant.now();
+        this.failedLoginAttempts = 0;
+        this.lockedUntil = null;
+    }
+
+    /** Đang trong thời gian tạm khóa do đăng nhập sai nhiều lần. */
+    public boolean isLocked(Instant now) {
+        return lockedUntil != null && lockedUntil.isAfter(now);
+    }
+
+    /**
+     * Ghi nhận một lần sai mật khẩu; đủ {@code maxAttempts} lần liên tiếp → tạm khóa {@code lockDuration}.
+     *
+     * @return true nếu lần sai này làm tài khoản bị khóa
+     */
+    public boolean registerFailedLogin(int maxAttempts, Duration lockDuration, Instant now) {
+        int attempts = (failedLoginAttempts == null ? 0 : failedLoginAttempts) + 1;
+        if (attempts >= maxAttempts) {
+            lockedUntil = now.plus(lockDuration);
+            failedLoginAttempts = 0;
+            return true;
+        }
+        failedLoginAttempts = attempts;
+        return false;
+    }
+
+    public int getFailedLoginAttempts() {
+        return failedLoginAttempts == null ? 0 : failedLoginAttempts;
+    }
+
+    public Instant getLockedUntil() {
+        return lockedUntil;
     }
 
     public Long getId() {

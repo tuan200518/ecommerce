@@ -35,19 +35,37 @@ public final class AccessPolicy {
             new Rule(HttpMethod.GET, "/api/categories"),
             new Rule(HttpMethod.GET, "/api/categories/**"),
             new Rule(HttpMethod.GET, "/api/inventory/availability"),
-            new Rule(null, "/actuator/health"));
+            new Rule(HttpMethod.GET, "/api/reviews/products/**"),
+            new Rule(HttpMethod.GET, "/api/loyalty/referrals/*"),
+            new Rule(HttpMethod.GET, "/api/loyalty/tiers"),
+            new Rule(HttpMethod.GET, "/api/shipments/carriers"),
+            new Rule(HttpMethod.GET, "/api/loyalty/rewards"),
+            new Rule(HttpMethod.GET, "/api/promotions/flash-sales/active"),
+            new Rule(HttpMethod.GET, "/api/promotions/vouchers/public"));
 
     private static final Set<String> STAFF = Set.of(Roles.ADMIN, Roles.ANALYST, Roles.PRODUCT_MANAGER,
             Roles.WAREHOUSE_MANAGER);
 
-    /** Đường dẫn yêu cầu vai trò cụ thể. */
+    /** Đường dẫn yêu cầu vai trò cụ thể – quy tắc ĐẦU TIÊN khớp được áp dụng. */
     private static final List<RoleRule> ROLE_RULES = List.of(
             new RoleRule("/api/auth/users/**", Set.of(Roles.ADMIN)),
             new RoleRule("/api/simulator", Set.of(Roles.ADMIN)),
             new RoleRule("/api/simulator/**", Set.of(Roles.ADMIN)),
             new RoleRule("/api/analytics/**", STAFF),
             new RoleRule("/api/payments", Set.of(Roles.ADMIN, Roles.ANALYST)),
-            new RoleRule("/api/payments/summary", Set.of(Roles.ADMIN, Roles.ANALYST)));
+            new RoleRule("/api/payments/summary", Set.of(Roles.ADMIN, Roles.ANALYST)),
+            new RoleRule("/api/fraud/**", Set.of(Roles.ADMIN, Roles.ANALYST)),
+            new RoleRule("/api/loyalty/admin/**", Set.of(Roles.ADMIN, Roles.ANALYST)),
+            new RoleRule("/api/reviews/admin/**", Set.of(Roles.ADMIN, Roles.PRODUCT_MANAGER)),
+            // Promotion: quản trị chiến dịch/voucher (service kiểm tra lại quyền ghi: ADMIN/PRODUCT_MANAGER)
+            new RoleRule("/api/promotions/admin/**", Set.of(Roles.ADMIN, Roles.PRODUCT_MANAGER, Roles.ANALYST)),
+            // Nhật ký kiểm toán: chỉ quản trị viên
+            new RoleRule("/api/audit", Set.of(Roles.ADMIN)),
+            new RoleRule("/api/audit/**", Set.of(Roles.ADMIN)),
+            // Khách xem vận đơn của đơn mình (service kiểm tra chủ sở hữu); các API vận đơn khác chỉ cho nhân viên
+            new RoleRule("/api/shipments/orders/**", Roles.ALL),
+            new RoleRule("/api/shipments", Set.of(Roles.ADMIN, Roles.WAREHOUSE_MANAGER, Roles.ANALYST)),
+            new RoleRule("/api/shipments/**", Set.of(Roles.ADMIN, Roles.WAREHOUSE_MANAGER, Roles.ANALYST)));
 
     private AccessPolicy() {
     }

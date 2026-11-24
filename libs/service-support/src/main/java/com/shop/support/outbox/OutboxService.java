@@ -43,9 +43,10 @@ public class OutboxService {
             throw new IllegalStateException("Không thể serialize sự kiện " + eventType, e);
         }
         jdbc.update("""
-                        INSERT INTO outbox_events (event_id, topic, message_key, event_type, payload, created_at)
-                        VALUES (?, ?, ?, ?, ?, ?)""",
-                envelope.eventId(), topic, aggregateId, eventType, json, Timestamp.from(Instant.now()));
+                        INSERT INTO outbox_events (event_id, topic, message_key, event_type, payload, created_at, correlation_id)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                envelope.eventId(), topic, aggregateId, eventType, json, Timestamp.from(Instant.now()),
+                envelope.correlationId());
         return envelope;
     }
 }

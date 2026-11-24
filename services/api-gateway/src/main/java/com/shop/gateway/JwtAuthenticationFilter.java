@@ -22,7 +22,8 @@ import java.nio.charset.StandardCharsets;
 /**
  * Xác thực JWT cho mọi request đi qua Gateway.
  * <ol>
- *   <li>Luôn xóa các header X-User-* do client gửi lên (chống giả mạo danh tính).</li>
+ *   <li>Luôn xóa các header X-User-* do client gửi lên (chống giả mạo danh tính) và gắn X-Client-Ip
+ *       do Gateway tự xác định ({@link ClientIp}) cho rate limit / nhật ký kiểm toán.</li>
  *   <li>Đọc token từ header Authorization hoặc query param access_token (EventSource/SSE không gửi được header).</li>
  *   <li>Token hợp lệ → gắn X-User-Id / X-User-Email / X-User-Roles cho service phía sau.</li>
  *   <li>Đường dẫn cần đăng nhập mà không có token hợp lệ → 401; thiếu vai trò → 403.</li>
@@ -65,10 +66,12 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
         }
 
         final AuthenticatedUser authenticated = user;
+        final String clientIp = ClientIp.resolve(request);
         ServerHttpRequest mutated = request.mutate().headers(h -> {
             h.remove(AuthHeaders.USER_ID);
             h.remove(AuthHeaders.USER_EMAIL);
             h.remove(AuthHeaders.USER_ROLES);
+            h.set(AuthHeaders.CLIENT_IP, clientIp);
             if (authenticated != null) {
                 h.set(AuthHeaders.USER_ID, Long.toString(authenticated.userId()));
                 h.set(AuthHeaders.USER_EMAIL, authenticated.email() == null ? "" : authenticated.email());

@@ -21,6 +21,8 @@ import com.shop.inventory.domain.InventoryTransaction.Type;
 import com.shop.inventory.domain.InventoryTransactionRepository;
 import com.shop.inventory.domain.Reservation;
 import com.shop.inventory.domain.ReservationRepository;
+import com.shop.common.security.AuthenticatedUser;
+import com.shop.support.audit.AuditTrail;
 import com.shop.support.outbox.IdempotencyGuard;
 import com.shop.support.outbox.OutboxService;
 import com.shop.support.web.ApiException;
@@ -48,16 +50,19 @@ public class InventoryService {
     private final InventoryTransactionRepository transactions;
     private final OutboxService outbox;
     private final IdempotencyGuard guard;
+    private final AuditTrail audit;
     private final int defaultInitialStock;
     private final int defaultThreshold;
 
     public InventoryService(InventoryRepository inventories, ReservationRepository reservations,
                             InventoryTransactionRepository transactions, OutboxService outbox, IdempotencyGuard guard,
+                            AuditTrail audit,
                             @Value("${shop.inventory.default-initial-stock:100}") int defaultInitialStock,
                             @Value("${shop.inventory.default-low-stock-threshold:10}") int defaultThreshold) {
         this.inventories = inventories;
         this.reservations = reservations;
         this.transactions = transactions;
+        this.audit = audit;
         this.outbox = outbox;
         this.guard = guard;
         this.defaultInitialStock = defaultInitialStock;
@@ -198,7 +203,7 @@ public class InventoryService {
     // ------------------------------------------------------------------ Quản lý kho (REST)
 
     @Transactional
-    public Inventory restock(long productId, int quantity, String note, String actor) {
+    public Inventory restock(long productId, int quantity, String note, AuthenticatedUser actor) {
         if (quantity <= 0) {
             throw ApiException.badRequest("Số lượng nhập phải lớn hơn 0");
         }
@@ -206,20 +211,24 @@ public class InventoryService {
             throw ApiException.notFound("Không tìm thấy tồn kho sản phẩm #" + productId);
         }
         transactions.save(new InventoryTransaction(productId, null, Type.RESTOCK, quantity,
-                (note == null || note.isBlank() ? "Nhập kho" : note) + " (" + actor + ")"));
+                (note == null || note.isBlank() ? "Nhập kho" : note) + " (" + actor.email() + ")"));
         Inventory inv = inventories.findById(productId).orElseThrow();
+        audit.record(actor, "STOCK_RESTOCKED", "INVENTORY", productId, "+" + quantity + " → còn " + inv.getAvailable()
+                + (note == null || note.isBlank() ? "" : " (" + note + ")"));
         publishStock(inv);
         return inv;
     }
 
     @Transactional
-    public Inventory changeThreshold(long productId, int threshold) {
+    public Inventory changeThreshold(long productId, int threshold, AuthenticatedUser actor) {
         if (threshold < 0) {
             throw ApiException.badRequest("Ngưỡng cảnh báo không hợp lệ");
         }
         Inventory inv = inventories.findById(productId)
                 .orElseThrow(() -> ApiException.notFound("Không tìm thấy tồn kho sản phẩm #" + productId));
+        int previous = inv.getLowStockThreshold();
         inv.changeThreshold(threshold);
+        audit.record(actor, "STOCK_THRESHOLD_CHANGED", "INVENTORY", productId, previous + " → " + threshold);
         publishStock(inv);
         checkLowStock(inv, Integer.MAX_VALUE);
         return inv;

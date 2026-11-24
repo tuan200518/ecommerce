@@ -1,0 +1,33 @@
+server:
+  port: ${PORT:8095}
+
+spring:
+  application:
+    name: review-service
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/review_db}
+    username: ${DB_USER:shop}
+    password: ${DB_PASSWORD:shop}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: update
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:9094}
+    consumer:
+      group-id: review-service
+      auto-offset-reset: earliest
+    listener:
+      concurrency: 3
+    producer:
+      acks: all
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+
+logging:
+  level:
+    com.shop: INFO

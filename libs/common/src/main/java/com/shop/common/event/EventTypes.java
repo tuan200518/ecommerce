@@ -46,6 +46,44 @@ public final class EventTypes {
     public static final String METRIC_UPDATED = "MetricUpdated";
     public static final String ALERT_RAISED = "AlertRaised";
 
+    // user-activity-events
+    public static final String PRODUCT_VIEWED = "ProductViewed";
+    public static final String SEARCH_PERFORMED = "SearchPerformed";
+
+    // fraud-alert-events
+    /** Kết quả chấm điểm rủi ro cho MỌI đơn mới (Order Service chờ sự kiện này trước khi yêu cầu thanh toán). */
+    public static final String RISK_ASSESSED = "RiskAssessed";
+    /** Đơn vượt ngưỡng rủi ro, cần nhân viên xác minh (dùng cho cảnh báo / thông báo). */
+    public static final String ORDER_FLAGGED = "OrderFlagged";
+    /** Nhân viên đã xác minh: chấp nhận hoặc từ chối đơn. */
+    public static final String RISK_REVIEWED = "RiskReviewed";
+
+    // shipping-events
+    public static final String SHIPMENT_CREATED = "ShipmentCreated";
+    public static final String SHIPMENT_STATUS_CHANGED = "ShipmentStatusChanged";
+    public static final String SHIPMENT_DELIVERED = "ShipmentDelivered";
+
+    // loyalty-events
+    public static final String POINTS_EARNED = "PointsEarned";
+    public static final String POINTS_REVERSED = "PointsReversed";
+    public static final String TIER_CHANGED = "TierChanged";
+    /** Khách đổi điểm lấy phần thưởng (Promotion Service phát voucher tương ứng). */
+    public static final String POINTS_REDEEMED = "PointsRedeemed";
+
+    // review-events
+    public static final String REVIEW_SUBMITTED = "ReviewSubmitted";
+    public static final String REVIEW_VISIBILITY_CHANGED = "ReviewVisibilityChanged";
+
+    // promotion-events
+    /** Kết quả định giá khuyến mãi cho MỌI đơn mới (có thể giảm 0đ) – một điều kiện để yêu cầu thanh toán. */
+    public static final String PROMOTION_APPLIED = "PromotionApplied";
+    /** Mã giảm giá không hợp lệ / hết suất flash sale → Order Service hủy đơn. */
+    public static final String PROMOTION_REJECTED = "PromotionRejected";
+    public static final String VOUCHER_ISSUED = "VoucherIssued";
+
+    // audit-events
+    public static final String AUDIT_RECORDED = "AuditRecorded";
+
     private EventTypes() {
     }
 }

@@ -45,8 +45,11 @@ import static com.shop.simulator.engine.RandomData.rnd;
  *                                                                               └─▶ đặt hàng (thẻ / ví / thẻ bị từ chối)
  *                                                                                    └─▶ đôi khi hủy đơn sau vài giây
  * </pre>
- * Song song có 2 "nhân viên ảo": nhập kho khi sắp hết hàng và chuyển đơn CONFIRMED → SHIPPING → DELIVERED,
- * để hệ thống có thể chạy liên tục nhiều giờ mà không cạn hàng.
+ * Ngoài ra: khách quay lại đánh giá / hỏi đáp sản phẩm, và thỉnh thoảng một "khách đáng ngờ" (tài khoản mới,
+ * đơn rất lớn) để Fraud Service gắn cờ.
+ * <p>
+ * Song song có 3 "nhân viên ảo": nhập kho khi sắp hết hàng, xử lý vận đơn (đóng gói → bàn giao → đang giao →
+ * đã giao) qua Shipping Service, và xác minh đơn bị gắn cờ rủi ro – để hệ thống chạy liên tục nhiều giờ.
  */
 @Component
 public class CustomerSimulator implements ApplicationRunner {
@@ -71,6 +74,9 @@ public class CustomerSimulator implements ApplicationRunner {
 
     private volatile SimulatorSettings settings;
     private volatile Catalog catalog = Catalog.empty();
+    /** Sản phẩm đang flash sale còn suất + mã giảm giá công khai (làm mới cùng danh mục). */
+    private volatile List<Long> flashProducts = List.of();
+    private volatile List<String> voucherCodes = List.of();
     private volatile Instant catalogLoadedAt = Instant.EPOCH;
     private volatile boolean running;
     private volatile Instant startedAt;
@@ -107,6 +113,7 @@ public class CustomerSimulator implements ApplicationRunner {
         arrivals = Thread.ofPlatform().name("sim-arrivals").daemon(true).start(this::arrivalLoop);
         bots.add(scheduler.scheduleWithFixedDelay(this::safeRestock, 10, 20, TimeUnit.SECONDS));
         bots.add(scheduler.scheduleWithFixedDelay(this::safeFulfill, 10, 10, TimeUnit.SECONDS));
+        bots.add(scheduler.scheduleWithFixedDelay(this::safeRiskReview, 15, 15, TimeUnit.SECONDS));
         log.info("Bắt đầu mô phỏng khách hàng ảo: {}", settings);
     }
 
@@ -224,7 +231,15 @@ public class CustomerSimulator implements ApplicationRunner {
     private void runSession(boolean forceOrder) throws InterruptedException {
         SimulatorSettings s = settings;
         activity.record(Kind.SESSION, null, null);
+        if (!forceOrder && chance(s.suspiciousRate())) {
+            suspiciousSession();
+            return;
+        }
         VirtualCustomer c = chooseCustomer(s);
+        if (!forceOrder && chance(s.reviewRate())) {
+            afterSalesSession(c);
+            return;
+        }
 
         // 1. Xem danh sách / tìm kiếm
         if (chance(0.3)) {
@@ -263,6 +278,20 @@ public class CustomerSimulator implements ApplicationRunner {
             }
             think(300, 900);
         }
+        // 3b. "Săn" flash sale: thêm 1 sản phẩm đang giảm giá (giới hạn mỗi khách do Promotion Service kiểm soát)
+        List<Long> flash = flashProducts;
+        if (!flash.isEmpty() && chance(s.flashSaleRate())) {
+            long productId = flash.get(rnd().nextInt(flash.size()));
+            try {
+                withAuth(c, t -> client.addToCart(t, productId, 1));
+                added++;
+                activity.record(Kind.FLASH_SALE, c.name(), "săn flash sale sản phẩm #" + productId);
+            } catch (ShopApiException e) {
+                if (e.status() != 400) {
+                    throw e;
+                }
+            }
+        }
         if (added == 0) {
             return;
         }
@@ -284,13 +313,14 @@ public class CustomerSimulator implements ApplicationRunner {
             return;
         }
         String method = chance(s.paymentFailureRate()) ? "MOCK_FAIL" : chance(0.6) ? "MOCK_CARD" : "MOCK_WALLET";
+        String voucher = pickVoucher(c, s, items);
         think(500, 1500);
-        JsonNode order = withAuth(c, t -> client.placeOrder(t, items, RandomData.address(c.name()), method));
+        JsonNode order = withAuth(c, t -> client.placeOrder(t, items, RandomData.address(c.name()), method, voucher));
         long orderId = order.path("id").asLong();
         double total = order.path("totalAmount").asDouble();
         activity.addOrderValue(total);
         activity.record(Kind.ORDER, c.name(), "đặt đơn #" + orderId + " – " + items.size() + " món – "
-                + money(total) + " – " + method);
+                + money(total) + " – " + method + (voucher == null ? "" : " – mã " + voucher));
 
         // 5. Đôi khi đổi ý và hủy đơn
         if (chance(s.cancelRate())) {
@@ -303,6 +333,27 @@ public class CustomerSimulator implements ApplicationRunner {
                 }
             }, RandomData.thinkMillis(3000, 10000), TimeUnit.MILLISECONDS);
         }
+    }
+
+    /** Khách thử một mã công khai; chỉ dùng khi báo giá xác nhận mã hợp lệ cho giỏ hiện tại (như người thật). */
+    private String pickVoucher(VirtualCustomer c, SimulatorSettings s, List<Map<String, Object>> items) {
+        List<String> codes = voucherCodes;
+        if (codes.isEmpty() || !chance(s.voucherRate())) {
+            return null;
+        }
+        String code = codes.get(rnd().nextInt(codes.size()));
+        try {
+            JsonNode quote = withAuth(c, t -> client.quote(t, items, code));
+            if (quote.path("voucherValid").asBoolean() && quote.path("warnings").isEmpty()
+                    && quote.path("voucherDiscount").asDouble() > 0) {
+                activity.record(Kind.VOUCHER, c.name(), "áp mã " + code + " giảm "
+                        + money(quote.path("voucherDiscount").asDouble()));
+                return code;
+            }
+        } catch (ShopApiException e) {
+            log.debug("Báo giá thất bại: {}", e.getMessage());
+        }
+        return null;
     }
 
     private VirtualCustomer chooseCustomer(SimulatorSettings s) {
@@ -362,29 +413,134 @@ public class CustomerSimulator implements ApplicationRunner {
         }
     }
 
-    /** Đơn đã xác nhận ≥ 15 giây → đang giao; đang giao ≥ 30 giây → đã giao. */
+    /**
+     * Nhân viên kho/giao hàng ảo xử lý vận đơn của Shipping Service theo hàng đợi:
+     * chờ đóng gói ≥ 5s → đóng gói; đóng gói ≥ 8s → bàn giao; bàn giao ≥ 8s → đang giao; đang giao ≥ 15s → đã giao.
+     * Order Service tự chuyển đơn sang SHIPPING / DELIVERED khi nhận shipping-events.
+     */
     private void fulfillBot() {
         VirtualCustomer staff = staff();
         Instant now = Instant.now();
-        moveOrders(staff, "SHIPPING", "DELIVERED", now.minusSeconds(30), Kind.DELIVER, "đã giao đơn #");
-        moveOrders(staff, "CONFIRMED", "SHIPPING", now.minusSeconds(15), Kind.SHIP, "bắt đầu giao đơn #");
+        moveShipments(staff, "IN_TRANSIT", "DELIVERED", now.minusSeconds(15), Kind.DELIVER, "đã giao vận đơn ");
+        moveShipments(staff, "HANDED_OVER", "IN_TRANSIT", now.minusSeconds(8), Kind.SHIP, "đang giao vận đơn ");
+        moveShipments(staff, "PACKED", "HANDED_OVER", now.minusSeconds(8), Kind.SHIP, "bàn giao vận đơn ");
+        moveShipments(staff, "CREATED", "PACKED", now.minusSeconds(5), Kind.PACK, "đóng gói vận đơn ");
     }
 
-    private void moveOrders(VirtualCustomer staff, String from, String to, Instant olderThan, Kind kind, String text) {
-        JsonNode page = withAuth(staff, t -> client.ordersByStatus(t, from));
+    private void moveShipments(VirtualCustomer staff, String from, String to, Instant olderThan, Kind kind, String text) {
+        JsonNode page = withAuth(staff, t -> client.shipments(t, from));
         int moved = 0;
-        for (JsonNode o : page.path("content")) {
-            Instant updated = Instant.parse(o.path("updatedAt").asText());
+        for (JsonNode s : page.path("content")) {
+            Instant updated = Instant.parse(s.path("updatedAt").asText());
             if (updated.isBefore(olderThan) && moved < 25) {
-                long id = o.path("id").asLong();
+                long id = s.path("id").asLong();
                 try {
-                    withAuth(staff, t -> client.updateOrderStatus(t, id, to));
-                    activity.record(kind, "NV giao hàng ảo", text + id);
+                    withAuth(staff, t -> client.updateShipment(t, id, to));
+                    activity.record(kind, "NV vận chuyển ảo", text + s.path("trackingNumber").asText()
+                            + " (đơn #" + s.path("orderId").asLong() + ")");
                     moved++;
                 } catch (ShopApiException e) {
-                    // khách vừa hủy / trạng thái đã đổi → bỏ qua
+                    // vận đơn vừa bị hủy / trạng thái đã đổi → bỏ qua
                 }
             }
+        }
+    }
+
+    private void safeRiskReview() {
+        try {
+            if (running && settings.autoRiskReview()) {
+                riskReviewBot();
+            }
+        } catch (Exception e) {
+            activity.record(Kind.ERROR, "NV xác minh ảo", e.getMessage());
+        }
+    }
+
+    /**
+     * Nhân viên xác minh rủi ro ảo: hồ sơ chờ ≥ 45 giây → "gọi điện xác nhận". Điểm rất cao (≥ 90) bị từ chối,
+     * còn lại được chấp nhận – mô phỏng bước review thủ công (hệ thống không tự kết luận gian lận).
+     */
+    private void riskReviewBot() {
+        VirtualCustomer analyst = new VirtualCustomer(props.analystEmail(), props.analystPassword(), "analyst",
+                VirtualCustomer.Persona.REGULAR);
+        JsonNode page = withAuth(analyst, t -> client.riskCases(t, "PENDING_REVIEW"));
+        Instant cutoff = Instant.now().minusSeconds(45);
+        for (JsonNode c : page.path("content")) {
+            if (!Instant.parse(c.path("createdAt").asText()).isBefore(cutoff)) {
+                continue;
+            }
+            long orderId = c.path("orderId").asLong();
+            int score = c.path("score").asInt();
+            boolean approve = score < 90;
+            String note = approve ? "Đã gọi điện xác nhận với khách" : "Không xác minh được thông tin người mua";
+            try {
+                withAuth(analyst, t -> client.reviewRisk(t, orderId, approve, note));
+                activity.record(Kind.RISK_REVIEW, "NV xác minh ảo",
+                        (approve ? "chấp nhận" : "từ chối") + " đơn #" + orderId + " (" + score + " điểm)");
+            } catch (ShopApiException e) {
+                // đơn vừa bị hủy / đã được người thật xử lý → bỏ qua
+            }
+        }
+    }
+
+    /** Khách "đáng ngờ": tài khoản vừa tạo đặt số lượng lớn sản phẩm đắt tiền → Fraud Service gắn cờ. */
+    private void suspiciousSession() throws InterruptedException {
+        String name = RandomData.fullName();
+        String email = "sus." + System.currentTimeMillis() + "." + rnd().nextInt(1000) + "@shop.local";
+        String token = client.register(email, props.customerPassword(), name);
+        VirtualCustomer c = new VirtualCustomer(email, props.customerPassword(), name, VirtualCustomer.Persona.BIG_SPENDER);
+        tokens.put(email, token);
+        List<Map<String, Object>> items = new ArrayList<>();
+        for (int i = 0; i < 3; i++) {
+            Catalog.Item item = catalog.pickExpensive();
+            if (items.stream().noneMatch(m -> m.get("productId").equals(item.id()))) {
+                items.add(Map.of("productId", item.id(), "quantity", 8 + rnd().nextInt(5)));
+            }
+        }
+        think(300, 800);
+        JsonNode order = withAuth(c, t -> client.placeOrder(t, items, RandomData.address(name), "MOCK_CARD"));
+        activity.addOrderValue(order.path("totalAmount").asDouble());
+        activity.record(Kind.SUSPICIOUS, name, "tài khoản mới đặt đơn #" + order.path("id").asLong() + " – "
+                + money(order.path("totalAmount").asDouble()));
+    }
+
+    /** Khách quay lại: đánh giá một sản phẩm đã nhận, hoặc đặt câu hỏi về sản phẩm. */
+    private void afterSalesSession(VirtualCustomer c) {
+        // Đôi khi đổi điểm thưởng lấy voucher (Loyalty → Promotion qua Kafka)
+        if (chance(0.25)) {
+            long balance = withAuth(c, client::loyalty).path("balance").asLong();
+            String reward = balance >= 300 ? "FIXED_20K" : balance >= 200 ? "FREESHIP" : null;
+            if (reward != null) {
+                try {
+                    JsonNode result = withAuth(c, t -> client.redeem(t, reward));
+                    activity.record(Kind.REDEEM, c.name(), "đổi " + result.path("pointsSpent").asLong()
+                            + " điểm lấy \"" + result.path("rewardName").asText() + "\"");
+                    return;
+                } catch (ShopApiException e) {
+                    log.debug("Đổi điểm thất bại: {}", e.getMessage());
+                }
+            }
+        }
+        JsonNode orders = withAuth(c, client::myOrders);
+        for (JsonNode o : orders.path("content")) {
+            if (!"DELIVERED".equals(o.path("status").asText())) {
+                continue;
+            }
+            for (JsonNode item : o.path("items")) {
+                long productId = item.path("productId").asLong();
+                JsonNode eligibility = withAuth(c, t -> client.reviewEligibility(t, productId));
+                if (eligibility.path("canReview").asBoolean()) {
+                    int rating = RandomData.rating();
+                    withAuth(c, t -> client.submitReview(t, productId, rating, RandomData.reviewComment(rating)));
+                    activity.record(Kind.REVIEW, c.name(), rating + "★ cho " + item.path("productName").asText());
+                    return;
+                }
+            }
+        }
+        if (chance(0.3) && !catalog.isEmpty()) {
+            Catalog.Item item = catalog.pickPopular();
+            withAuth(c, t -> client.askQuestion(t, item.id(), RandomData.question()));
+            activity.record(Kind.QUESTION, c.name(), "hỏi về " + item.name());
         }
     }
 
@@ -412,6 +568,30 @@ public class CustomerSimulator implements ApplicationRunner {
             }
         } catch (ShopApiException e) {
             log.debug("Chưa tải được danh mục sản phẩm: {}", e.getMessage());
+        }
+        refreshPromotions();
+    }
+
+    private void refreshPromotions() {
+        try {
+            List<Long> flash = new ArrayList<>();
+            for (JsonNode sale : client.flashSales()) {
+                if ("ACTIVE".equals(sale.path("status").asText())) {
+                    for (JsonNode item : sale.path("items")) {
+                        if (item.path("remaining").asInt() > 0) {
+                            flash.add(item.path("productId").asLong());
+                        }
+                    }
+                }
+            }
+            List<String> codes = new ArrayList<>();
+            for (JsonNode v : client.publicVouchers()) {
+                codes.add(v.path("code").asText());
+            }
+            flashProducts = List.copyOf(flash);
+            voucherCodes = List.copyOf(codes);
+        } catch (ShopApiException e) {
+            log.debug("Chưa tải được khuyến mãi: {}", e.getMessage());
         }
     }
 

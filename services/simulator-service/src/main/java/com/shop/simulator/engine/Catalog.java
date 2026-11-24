@@ -62,6 +62,13 @@ public final class Catalog {
         return items.get(items.size() - 1);
     }
 
+    /** Chọn ngẫu nhiên trong nhóm sản phẩm đắt nhất (dùng cho "khách đáng ngờ"). */
+    public Item pickExpensive() {
+        List<Item> sorted = new ArrayList<>(items);
+        sorted.sort((a, b) -> Double.compare(b.price(), a.price()));
+        return sorted.get(ThreadLocalRandom.current().nextInt(Math.min(5, sorted.size())));
+    }
+
     /** Chọn ngẫu nhiên đều (dùng khi "lướt xem"). */
     public Item pickAny() {
         return items.get(ThreadLocalRandom.current().nextInt(items.size()));

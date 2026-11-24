@@ -103,13 +103,13 @@ public class InventoryController {
     public InventoryDto restock(AuthenticatedUser user, @PathVariable long productId,
                                 @Valid @RequestBody RestockRequest req) {
         Access.requireAnyRole(user, Roles.ADMIN, Roles.WAREHOUSE_MANAGER);
-        return InventoryDto.from(service.restock(productId, req.quantity(), req.note(), user.email()));
+        return InventoryDto.from(service.restock(productId, req.quantity(), req.note(), user));
     }
 
     @PutMapping("/{productId}/threshold")
     public InventoryDto threshold(AuthenticatedUser user, @PathVariable long productId,
                                   @Valid @RequestBody ThresholdRequest req) {
         Access.requireAnyRole(user, Roles.ADMIN, Roles.WAREHOUSE_MANAGER);
-        return InventoryDto.from(service.changeThreshold(productId, req.threshold()));
+        return InventoryDto.from(service.changeThreshold(productId, req.threshold(), user));
     }
 }

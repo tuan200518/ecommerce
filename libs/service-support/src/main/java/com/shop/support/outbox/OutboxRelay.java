@@ -1,5 +1,6 @@
 package com.shop.support.outbox;
 
+import com.shop.common.event.Correlation;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.header.internals.RecordHeader;
 import org.slf4j.Logger;
@@ -34,22 +35,27 @@ public class OutboxRelay {
         this.batchSize = batchSize;
     }
 
-    record Pending(long id, String eventId, String topic, String key, String eventType, String payload) {
+    record Pending(long id, String eventId, String topic, String key, String eventType, String payload,
+                   String correlationId) {
     }
 
     @Scheduled(fixedDelayString = "${shop.outbox.poll-interval-ms:250}", initialDelay = 2000)
     public void relay() {
         List<Pending> batch = jdbc.query("""
-                        SELECT id, event_id, topic, message_key, event_type, payload
+                        SELECT id, event_id, topic, message_key, event_type, payload, correlation_id
                         FROM outbox_events WHERE published_at IS NULL ORDER BY id LIMIT ?""",
                 (rs, i) -> new Pending(rs.getLong(1), rs.getString(2), rs.getString(3),
-                        rs.getString(4), rs.getString(5), rs.getString(6)),
+                        rs.getString(4), rs.getString(5), rs.getString(6), rs.getString(7)),
                 batchSize);
         for (Pending p : batch) {
             try {
                 ProducerRecord<String, String> record = new ProducerRecord<>(p.topic(), p.key(), p.payload());
                 record.headers().add(new RecordHeader("eventType", p.eventType().getBytes(StandardCharsets.UTF_8)));
                 record.headers().add(new RecordHeader("eventId", p.eventId().getBytes(StandardCharsets.UTF_8)));
+                if (p.correlationId() != null) {
+                    record.headers().add(new RecordHeader(Correlation.KAFKA_HEADER,
+                            p.correlationId().getBytes(StandardCharsets.UTF_8)));
+                }
                 kafka.send(record).get(10, TimeUnit.SECONDS);
                 jdbc.update("UPDATE outbox_events SET published_at = ?, attempts = attempts + 1 WHERE id = ?",
                         Timestamp.from(Instant.now()), p.id());

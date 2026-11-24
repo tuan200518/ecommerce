@@ -8,7 +8,7 @@ interface AuthState {
   user: User | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<User>;
-  register: (email: string, password: string, fullName: string) => Promise<User>;
+  register: (email: string, password: string, fullName: string, referralCode?: string) => Promise<User>;
   logout: () => void;
   hasRole: (...roles: string[]) => boolean;
   isStaff: boolean;
@@ -49,8 +49,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const register = useCallback(
-    (email: string, password: string, fullName: string) =>
-      api.post<TokenResponse>('/api/auth/register', { email, password, fullName }).then(handleToken),
+    (email: string, password: string, fullName: string, referralCode?: string) =>
+      api.post<TokenResponse>('/api/auth/register', { email, password, fullName, referralCode: referralCode || undefined })
+        .then(handleToken),
     [],
   );
 

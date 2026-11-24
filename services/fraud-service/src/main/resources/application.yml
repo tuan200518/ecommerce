@@ -1,0 +1,54 @@
+server:
+  port: ${PORT:8092}
+
+spring:
+  application:
+    name: fraud-service
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/fraud_db}
+    username: ${DB_USER:shop}
+    password: ${DB_PASSWORD:shop}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: update
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:9094}
+    consumer:
+      group-id: fraud-service
+      auto-offset-reset: earliest
+    listener:
+      concurrency: 3
+    producer:
+      acks: all
+
+# Luật chấm điểm rủi ro (rule-based). Giá trị khởi đầu để thử nghiệm – chỉnh theo dữ liệu thực tế.
+shop:
+  fraud:
+    review-score: ${FRAUD_REVIEW_SCORE:70}      # tổng điểm từ mức này VÀ ≥ min-signals-for-review tín hiệu → cần xác minh
+    medium-score: 40
+    min-signals-for-review: 2
+    high-value-amount: 50000000
+    very-high-value-amount: 100000000
+    velocity-orders: 4
+    velocity-window: PT10M
+    cancelled-orders: 3
+    cancel-window: PT24H
+    payment-failures: 2
+    payment-failure-window: PT1H
+    new-account-age: PT24H
+    new-account-amount: 10000000
+    bulk-quantity: 30
+    shared-address-users: 2
+    shared-address-window: P7D
+    max-event-age: PT10M
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+
+logging:
+  level:
+    com.shop: INFO

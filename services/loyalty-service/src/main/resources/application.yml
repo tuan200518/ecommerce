@@ -1,0 +1,42 @@
+server:
+  port: ${PORT:8093}
+
+spring:
+  application:
+    name: loyalty-service
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/loyalty_db}
+    username: ${DB_USER:shop}
+    password: ${DB_PASSWORD:shop}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: update
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:9094}
+    consumer:
+      group-id: loyalty-service
+      auto-offset-reset: earliest
+    listener:
+      concurrency: 3
+    producer:
+      acks: all
+
+shop:
+  loyalty:
+    amount-per-point: 10000          # 1 điểm cho mỗi 10.000 ₫ (trước khi nhân hệ số hạng)
+    first-order-bonus: 200
+    referral-bonus: 500
+    review-bonus: 50
+    max-review-bonus-per-day: 5
+    notify-max-age: PT10M
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+
+logging:
+  level:
+    com.shop: INFO

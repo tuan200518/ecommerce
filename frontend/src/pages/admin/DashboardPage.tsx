@@ -98,6 +98,7 @@ export default function DashboardPage() {
       series: [{
         type: 'funnel', left: '10%', width: '80%', sort: 'descending', label: { formatter: '{b}: {c}' },
         data: [
+          { name: 'Xem sản phẩm', value: c.product_views ?? 0 },
           { name: 'Thêm vào giỏ', value: c.cart_adds ?? 0 },
           { name: 'Tạo đơn', value: c.orders_created ?? 0 },
           { name: 'Thanh toán OK', value: c.payments_completed ?? 0 },
@@ -127,6 +128,9 @@ export default function DashboardPage() {
         <Kpi label="Tỷ lệ thanh toán thành công" value={`${k.paymentSuccessRate}%`} hint={`${number(k.paymentsFailed)} thất bại`} tone={k.paymentSuccessRate < 80 && k.paymentsFailed > 0 ? 'bad' : 'good'} />
         <Kpi label="Giá trị đơn trung bình" value={money(k.averageOrderValue)} />
         <Kpi label="Sản phẩm sắp hết" value={number(k.lowStockProducts)} tone={k.lowStockProducts > 0 ? 'bad' : 'good'} />
+        <Kpi label="Tỷ lệ xem → đặt hàng" value={`${k.viewToOrderRate ?? 0}%`} hint={`${number(k.productViews)} lượt xem sản phẩm`} />
+        <Kpi label="Đơn bị gắn cờ rủi ro" value={number(k.flaggedOrders)} hint="chờ / đã xác minh thủ công" tone={k.flaggedOrders > 0 ? 'bad' : undefined} />
+        <Kpi label="Giao thành công" value={number(k.shipmentsDelivered)} hint={`${number(k.reviews)} đánh giá sản phẩm`} />
       </div>
 
       <div className="grid-2">
@@ -158,7 +162,7 @@ export default function DashboardPage() {
         <div className="card">
           <h3>Phễu hành vi mua hàng</h3>
           <EChart option={funnelOption} />
-          <div className="muted small">Tỷ lệ giỏ → đơn: {k.cartToOrderRate}%</div>
+          <div className="muted small">Tỷ lệ xem → đơn: {k.viewToOrderRate ?? 0}% · giỏ → đơn: {k.cartToOrderRate}%</div>
         </div>
         <div className="card">
           <h3>Cảnh báo vận hành</h3>

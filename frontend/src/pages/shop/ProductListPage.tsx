@@ -4,12 +4,15 @@ import { api } from '../../api/client';
 import type { Availability, Category, Page, Product } from '../../api/types';
 import { Empty, ErrorBox, Loading, Pagination } from '../../components/Common';
 import { money } from '../../utils/format';
+import { FlashPrice } from '../../components/Promotions';
+import { useFlashOffers } from '../../hooks/useFlashSales';
 
 export default function ProductListPage() {
   const [params, setParams] = useSearchParams();
   const [categories, setCategories] = useState<Category[]>([]);
   const [data, setData] = useState<Page<Product> | null>(null);
   const [stock, setStock] = useState<Record<number, Availability>>({});
+  const offers = useFlashOffers();
   const [error, setError] = useState<string | null>(null);
   const [q, setQ] = useState(params.get('q') ?? '');
 
@@ -102,7 +105,7 @@ export default function ProductListPage() {
                     <div className="product-body">
                       <div className="muted tiny">{p.categoryName}</div>
                       <div className="product-name">{p.name}</div>
-                      <div className="price">{money(p.price)}</div>
+                      <FlashPrice price={p.price} offer={offers[p.id]} />
                       {s && (s.inStock
                         ? <span className={`stock ${s.available <= 10 ? 'low' : ''}`}>{s.available <= 10 ? `Chỉ còn ${s.available}` : 'Còn hàng'}</span>
                         : <span className="stock out">Hết hàng</span>)}

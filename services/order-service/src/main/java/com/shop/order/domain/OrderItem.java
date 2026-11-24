@@ -36,6 +36,10 @@ public class OrderItem {
     @Column(nullable = false)
     private int quantity;
 
+    /** Giá flash sale đã áp dụng (null nếu tính giá niêm yết) – phiên bản 2.1, cho phép NULL. */
+    @Column(precision = 14, scale = 2)
+    private BigDecimal salePrice;
+
     protected OrderItem() {
     }
 
@@ -65,5 +69,18 @@ public class OrderItem {
 
     public int getQuantity() {
         return quantity;
+    }
+
+    void applySalePrice(BigDecimal salePrice) {
+        this.salePrice = salePrice;
+    }
+
+    public BigDecimal getSalePrice() {
+        return salePrice;
+    }
+
+    /** Giá thực tính cho khách. */
+    public BigDecimal getEffectivePrice() {
+        return salePrice == null ? unitPrice : salePrice;
     }
 }

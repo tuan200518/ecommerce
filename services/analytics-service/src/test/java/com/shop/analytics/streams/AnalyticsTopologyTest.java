@@ -7,6 +7,9 @@ import com.shop.analytics.model.AnalyticsModels.MetricUpdate;
 import com.shop.common.event.EventEnvelope;
 import com.shop.common.event.EventTypes;
 import com.shop.common.event.Topics;
+import com.shop.common.event.payload.ActivityEvents.ProductViewed;
+import com.shop.common.event.payload.FraudEvents.RiskAssessed;
+import com.shop.common.event.payload.FraudEvents.RiskSignal;
 import com.shop.common.event.payload.InventoryEvents.StockLow;
 import com.shop.common.event.payload.OrderEvents.OrderCreated;
 import com.shop.common.event.payload.OrderEvents.OrderLine;
@@ -129,6 +132,31 @@ class AnalyticsTopologyTest {
                 new StockLow(5, "Áo khoác", 3, 10));
         inventory.pipeInput("5", json(env), t0);
         assertThat(alerts()).anyMatch(a -> a.type().equals("LOW_STOCK") && a.title().contains("Áo khoác"));
+    }
+
+    @Test
+    void flaggedOrder_raisesFraudAlert_andNewTopicsFeedCounters() {
+        TestInputTopic<String, String> fraud = driver.createInputTopic(Topics.FRAUD_ALERT_EVENTS,
+                new StringSerializer(), new StringSerializer());
+        TestInputTopic<String, String> activity = driver.createInputTopic(Topics.USER_ACTIVITY_EVENTS,
+                new StringSerializer(), new StringSerializer());
+        RiskAssessed flagged = new RiskAssessed(77, 9, new BigDecimal("150000000"), 85, "HIGH", true,
+                List.of(new RiskSignal("VERY_HIGH_VALUE", 50, "Giá trị đơn lớn"), new RiskSignal("NEW_ACCOUNT", 25, "Tài khoản mới")));
+        fraud.pipeInput("77", json(EventEnvelope.create(mapper, EventTypes.ORDER_FLAGGED, "fraud-service", "77", flagged)), t0);
+        activity.pipeInput("11", json(EventEnvelope.create(mapper, EventTypes.PRODUCT_VIEWED, "product-service", "11",
+                new ProductViewed(9L, 11, "Bàn phím", 1L, BigDecimal.TEN))), t0);
+        activity.pipeInput("11", json(EventEnvelope.create(mapper, EventTypes.PRODUCT_VIEWED, "product-service", "11",
+                new ProductViewed(null, 11, "Bàn phím", 1L, BigDecimal.TEN))), t0.plusSeconds(1));
+
+        List<EventEnvelope> out = output.readValuesToList().stream().map(this::read).toList();
+        assertThat(out).filteredOn(e -> e.is(EventTypes.ALERT_RAISED)).map(e -> e.payloadAs(mapper, Alert.class))
+                .anyMatch(a -> a.type().equals("ORDER_FLAGGED") && a.title().contains("#77") && a.message().contains("Tài khoản mới"));
+        assertThat(out).filteredOn(e -> e.is(EventTypes.METRIC_UPDATED)).map(e -> e.payloadAs(mapper, MetricUpdate.class))
+                .anyMatch(m -> m.metric().equals("counter") && m.key().equals("product_views") && m.value() == 2)
+                .anyMatch(m -> m.metric().equals("counter") && m.key().equals("orders_flagged") && m.value() == 1)
+                // Chỉ khách đã đăng nhập được tính là người dùng hoạt động
+                .anyMatch(m -> m.metric().equals("active_users_5m") && m.value() == 1)
+                .noneMatch(m -> m.metric().equals("active_users_5m") && m.value() > 1);
     }
 
     // ------------------------------------------------------------------ helpers

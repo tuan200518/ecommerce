@@ -7,16 +7,23 @@ import java.util.Set;
 /**
  * Vòng đời đơn hàng:
  * <pre>
- * PENDING ──InventoryReserved──▶ AWAITING_PAYMENT ──PaymentCompleted──▶ CONFIRMED ──▶ SHIPPING ──▶ DELIVERED
- *    │                                │                                    │
- *    └──InventoryRejected/timeout──▶ CANCELLED ◀──PaymentFailed/timeout────┘ (hủy bởi khách/admin)
+ *            ┌──RiskAssessed(HIGH)──▶ UNDER_REVIEW ──duyệt──┐
+ *            │                            │ từ chối/hết hạn  │
+ * PENDING ───┴─(đã giữ hàng + rủi ro thấp)─────────────────┴──▶ AWAITING_PAYMENT ──PaymentCompleted──▶ CONFIRMED
+ *    │                                                                │                                   │
+ *    └──InventoryRejected/timeout──▶ CANCELLED ◀──PaymentFailed/timeout┘    (hủy bởi khách/admin) ◀────────┤
+ *                                                                                                         ▼
+ *                                              Shipping Service: bàn giao vận chuyển ──▶ SHIPPING ──▶ DELIVERED
  * </pre>
+ * Đơn chỉ chuyển sang AWAITING_PAYMENT khi đủ HAI điều kiện: Inventory đã giữ hàng và Fraud Service đánh giá
+ * rủi ro chấp nhận được (hoặc nhân viên đã duyệt).
  */
 public enum OrderStatus {
-    PENDING, AWAITING_PAYMENT, CONFIRMED, SHIPPING, DELIVERED, CANCELLED;
+    PENDING, UNDER_REVIEW, AWAITING_PAYMENT, CONFIRMED, SHIPPING, DELIVERED, CANCELLED;
 
     private static final Map<OrderStatus, Set<OrderStatus>> ALLOWED = Map.of(
-            PENDING, EnumSet.of(AWAITING_PAYMENT, CANCELLED),
+            PENDING, EnumSet.of(AWAITING_PAYMENT, UNDER_REVIEW, CANCELLED),
+            UNDER_REVIEW, EnumSet.of(PENDING, AWAITING_PAYMENT, CANCELLED),
             AWAITING_PAYMENT, EnumSet.of(CONFIRMED, CANCELLED),
             CONFIRMED, EnumSet.of(SHIPPING, CANCELLED),
             SHIPPING, EnumSet.of(DELIVERED),
@@ -27,6 +34,6 @@ public enum OrderStatus {
         return ALLOWED.get(this).contains(next);
     }
 
-    /** Các trạng thái Saga đang chạy (chưa có kết quả giữ hàng/thanh toán). */
+    /** Các trạng thái Saga đang chạy tự động (chưa có kết quả giữ hàng/rủi ro/thanh toán). */
     public static final Set<OrderStatus> IN_FLIGHT = EnumSet.of(PENDING, AWAITING_PAYMENT);
 }

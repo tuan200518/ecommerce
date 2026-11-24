@@ -1,14 +1,22 @@
 package com.shop.order;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.shop.common.event.Correlation;
 import com.shop.common.event.EventEnvelope;
 import com.shop.common.event.EventTypes;
 import com.shop.common.event.Topics;
+import com.shop.common.event.payload.FraudEvents.RiskAssessed;
+import com.shop.common.event.payload.FraudEvents.RiskReviewed;
+import com.shop.common.event.payload.FraudEvents.RiskSignal;
 import com.shop.common.event.payload.InventoryEvents.InventoryRejected;
 import com.shop.common.event.payload.InventoryEvents.InventoryReserved;
 import com.shop.common.event.payload.InventoryEvents.ReservedLine;
 import com.shop.common.event.payload.PaymentEvents.PaymentResult;
 import com.shop.common.event.payload.ProductEvents.ProductChanged;
+import com.shop.common.event.payload.PromotionEvents.AppliedLine;
+import com.shop.common.event.payload.PromotionEvents.PromotionApplied;
+import com.shop.common.event.payload.PromotionEvents.PromotionRejected;
+import com.shop.common.event.payload.ShippingEvents.ShipmentChanged;
 import com.shop.common.security.AuthenticatedUser;
 import com.shop.common.security.Roles;
 import com.shop.order.domain.OrderRepository;
@@ -17,6 +25,8 @@ import com.shop.order.service.OrderService;
 import com.shop.order.web.OrderDtos.CreateOrderRequest;
 import com.shop.order.web.OrderDtos.ItemRequest;
 import com.shop.order.web.OrderDtos.OrderDto;
+import com.shop.order.web.OrderDtos.UpdateStatusRequest;
+import com.shop.support.web.ApiException;
 import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.common.serialization.StringDeserializer;
@@ -40,12 +50,14 @@ import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.awaitility.Awaitility.await;
 
 /**
  * Kiểm thử luồng Saga của Order Service với Kafka nhúng + H2:
  * TC01 (OrderCreated được publish), TC02 (thanh toán thành công), TC03 (thanh toán thất bại),
- * TC04 (hết hàng → hủy), TC09 (gửi lại cùng sự kiện không gây tác động trùng).
+ * TC04 (hết hàng → hủy), TC09 (gửi lại cùng sự kiện không gây tác động trùng),
+ * cổng rủi ro (Fraud Service) + xác minh thủ công, và trạng thái giao hàng điều khiển bởi Shipping Service.
  */
 @SpringBootTest(properties = {
         "spring.datasource.url=jdbc:h2:mem:orderdb;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1",
@@ -64,6 +76,7 @@ import static org.awaitility.Awaitility.await;
 class OrderSagaIntegrationTest {
 
     private static final AuthenticatedUser CUSTOMER = new AuthenticatedUser(42L, "c@shop.local", Set.of(Roles.CUSTOMER));
+    private static final AuthenticatedUser STAFF = new AuthenticatedUser(1L, "admin@shop.local", Set.of(Roles.ADMIN));
 
     @Autowired
     EmbeddedKafkaBroker broker;
@@ -136,6 +149,8 @@ class OrderSagaIntegrationTest {
 
         // TC01: OrderCreated được publish qua outbox
         awaitEvent(EventTypes.ORDER_CREATED, order.id());
+        assertThat(createdEvent(order.id()).correlationId()).isNotBlank();
+        clearChecks(order.id());
 
         send(Topics.INVENTORY_EVENTS, EventTypes.INVENTORY_RESERVED, String.valueOf(order.id()),
                 new InventoryReserved(order.id(), List.of(new ReservedLine(1L, 2), new ReservedLine(2L, 2))));
@@ -160,6 +175,7 @@ class OrderSagaIntegrationTest {
     @Test
     void paymentFailure_cancelsOrder_andPublishesCompensation() {
         OrderDto order = orderService.createOrder(CUSTOMER, request(2L, 3));
+        clearChecks(order.id());
         send(Topics.INVENTORY_EVENTS, EventTypes.INVENTORY_RESERVED, String.valueOf(order.id()),
                 new InventoryReserved(order.id(), List.of(new ReservedLine(2L, 3))));
         awaitStatus(order.id(), "AWAITING_PAYMENT");
@@ -184,6 +200,7 @@ class OrderSagaIntegrationTest {
     void malformedMessage_doesNotBlockConsumer() {
         kafka.send(Topics.PAYMENT_EVENTS, "x", "{not-json");
         OrderDto order = orderService.createOrder(CUSTOMER, request(1L, 1));
+        clearChecks(order.id());
         send(Topics.INVENTORY_EVENTS, EventTypes.INVENTORY_RESERVED, String.valueOf(order.id()),
                 new InventoryReserved(order.id(), List.of(new ReservedLine(1L, 1))));
         awaitStatus(order.id(), "AWAITING_PAYMENT");
@@ -192,7 +209,181 @@ class OrderSagaIntegrationTest {
         awaitStatus(order.id(), "CONFIRMED");
     }
 
+    @Test
+    void smallOrder_paysShippingFee() {
+        OrderDto order = orderService.createOrder(CUSTOMER, request(2L, 1));
+        assertThat(order.subtotal()).isEqualByComparingTo("350000");
+        assertThat(order.shippingFee()).isEqualByComparingTo("30000");
+        assertThat(order.totalAmount()).isEqualByComparingTo("380000");
+        assertThat(order.riskLevel()).isNull(); // khách hàng không thấy thông tin rủi ro
+    }
+
+    @Test
+    void reservationBeforeRiskAssessment_waitsForBothConditions() {
+        OrderDto order = orderService.createOrder(CUSTOMER, request(1L, 1));
+        send(Topics.INVENTORY_EVENTS, EventTypes.INVENTORY_RESERVED, String.valueOf(order.id()),
+                new InventoryReserved(order.id(), List.of(new ReservedLine(1L, 1))));
+        await().atMost(Duration.ofSeconds(20)).until(() -> orders.findById(order.id()).orElseThrow().isInventoryReserved());
+        assertThat(orders.findById(order.id()).orElseThrow().getStatus().name()).isEqualTo("PENDING");
+
+        noPromotion(order.id());
+        await().atMost(Duration.ofSeconds(20)).until(() -> orders.findById(order.id()).orElseThrow().isPromotionCleared());
+        assertThat(orders.findById(order.id()).orElseThrow().getStatus().name()).isEqualTo("PENDING");
+        // Sự kiện kích hoạt mang correlationId "trace-..." → sự kiện Order Service phát tiếp phải mang cùng giá trị
+        String trace = "trace-" + order.id();
+        Correlation.set(trace);
+        try {
+            lowRisk(order.id());
+        } finally {
+            Correlation.clear();
+        }
+        awaitStatus(order.id(), "AWAITING_PAYMENT");
+        awaitEvent(EventTypes.PAYMENT_REQUESTED, order.id());
+        assertThat(orderEvents).filteredOn(e -> e.is(EventTypes.PAYMENT_REQUESTED)
+                        && String.valueOf(order.id()).equals(e.aggregateId()))
+                .singleElement().extracting(EventEnvelope::correlationId).isEqualTo(trace);
+    }
+
+    @Test
+    void highRisk_holdsOrderForReview_thenApprovedOrderRequestsPayment() {
+        OrderDto order = orderService.createOrder(CUSTOMER, request(1L, 2));
+        risk(order.id(), 85, "HIGH", true);
+        awaitStatus(order.id(), "UNDER_REVIEW");
+
+        // Kho giữ hàng trong lúc chờ xác minh nhưng KHÔNG được yêu cầu thanh toán
+        send(Topics.INVENTORY_EVENTS, EventTypes.INVENTORY_RESERVED, String.valueOf(order.id()),
+                new InventoryReserved(order.id(), List.of(new ReservedLine(1L, 2))));
+        await().atMost(Duration.ofSeconds(20)).until(() -> orders.findById(order.id()).orElseThrow().isInventoryReserved());
+        assertThat(orders.findById(order.id()).orElseThrow().getStatus().name()).isEqualTo("UNDER_REVIEW");
+        assertThat(countEvents(EventTypes.PAYMENT_REQUESTED, order.id())).isZero();
+
+        noPromotion(order.id());
+        send(Topics.FRAUD_ALERT_EVENTS, EventTypes.RISK_REVIEWED, String.valueOf(order.id()),
+                new RiskReviewed(order.id(), 42L, true, "analyst@shop.local", "Đã gọi xác nhận"));
+        awaitStatus(order.id(), "AWAITING_PAYMENT");
+        awaitEvent(EventTypes.PAYMENT_REQUESTED, order.id());
+        assertThat(orderService.getOrder(STAFF, order.id()).riskLevel()).isEqualTo("HIGH");
+    }
+
+    @Test
+    void highRisk_rejectedByReviewer_cancelsOrderAndReleasesStock() {
+        OrderDto order = orderService.createOrder(CUSTOMER, request(2L, 2));
+        risk(order.id(), 90, "HIGH", true);
+        awaitStatus(order.id(), "UNDER_REVIEW");
+        send(Topics.FRAUD_ALERT_EVENTS, EventTypes.RISK_REVIEWED, String.valueOf(order.id()),
+                new RiskReviewed(order.id(), 42L, false, "analyst@shop.local", "Địa chỉ không xác thực được"));
+        awaitStatus(order.id(), "CANCELLED");
+        awaitEvent(EventTypes.ORDER_CANCELLED, order.id()); // Inventory hoàn kho khi nhận sự kiện này
+        assertThat(orders.findById(order.id()).orElseThrow().getCancelReason()).contains("Địa chỉ không xác thực được");
+    }
+
+    @Test
+    void shipmentEvents_driveShippingAndDelivery_staffCannotSkipShipping() {
+        OrderDto order = orderService.createOrder(CUSTOMER, request(1L, 1));
+        clearChecks(order.id());
+        send(Topics.INVENTORY_EVENTS, EventTypes.INVENTORY_RESERVED, String.valueOf(order.id()),
+                new InventoryReserved(order.id(), List.of(new ReservedLine(1L, 1))));
+        awaitStatus(order.id(), "AWAITING_PAYMENT");
+        send(Topics.PAYMENT_EVENTS, EventTypes.PAYMENT_COMPLETED, String.valueOf(order.id()),
+                new PaymentResult(13L, order.id(), 42L, order.totalAmount(), "MOCK_CARD", "SUCCEEDED", null));
+        awaitStatus(order.id(), "CONFIRMED");
+
+        assertThatThrownBy(() -> orderService.updateStatusByStaff(STAFF, order.id(),
+                new UpdateStatusRequest("SHIPPING", null))).isInstanceOf(ApiException.class);
+
+        send(Topics.SHIPPING_EVENTS, EventTypes.SHIPMENT_STATUS_CHANGED, String.valueOf(order.id()),
+                new ShipmentChanged(1L, order.id(), 42L, "GHN", "GHN123", "PACKED", "HANDED_OVER", BigDecimal.TEN, null));
+        awaitStatus(order.id(), "SHIPPING");
+        send(Topics.SHIPPING_EVENTS, EventTypes.SHIPMENT_DELIVERED, String.valueOf(order.id()),
+                new ShipmentChanged(1L, order.id(), 42L, "GHN", "GHN123", "IN_TRANSIT", "DELIVERED", BigDecimal.TEN, null));
+        awaitStatus(order.id(), "DELIVERED");
+    }
+
+    @Test
+    void promotionApplied_lowersTotal_andPaymentIsRequestedForDiscountedAmount() {
+        OrderDto order = orderService.createOrder(CUSTOMER, new CreateOrderRequest(
+                List.of(new ItemRequest(1L, 2)), "Địa chỉ test", "MOCK_CARD", "sale10"));
+        assertThat(order.voucherCode()).isEqualTo("SALE10");
+        assertThat(order.promotionPending()).isTrue();
+        assertThat(order.totalAmount()).isEqualByComparingTo("3000000"); // 2 × 1.500.000, miễn phí ship
+        awaitEvent(EventTypes.ORDER_CREATED, order.id());
+        assertThat(createdEvent(order.id()).payload().get("voucherCode").asText()).isEqualTo("SALE10");
+
+        // Flash sale 1.200.000/chiếc (giảm 600.000) + voucher giảm 240.000
+        send(Topics.PROMOTION_EVENTS, EventTypes.PROMOTION_APPLIED, String.valueOf(order.id()),
+                new PromotionApplied(order.id(), 42L, "SALE10",
+                        List.of(new AppliedLine(1L, 2, new BigDecimal("1500000"), new BigDecimal("1200000"), 9L)),
+                        new BigDecimal("600000"), new BigDecimal("240000"), new BigDecimal("840000"),
+                        "Flash sale -600.000 ₫; Voucher SALE10 -240.000 ₫"));
+        await().atMost(Duration.ofSeconds(20)).until(() -> orders.findById(order.id()).orElseThrow().isPromotionCleared());
+        OrderDto priced = orderService.getOrder(CUSTOMER, order.id());
+        assertThat(priced.subtotal()).isEqualByComparingTo("3000000");
+        assertThat(priced.discount()).isEqualByComparingTo("840000");
+        assertThat(priced.totalAmount()).isEqualByComparingTo("2160000");
+        assertThat(priced.items().get(0).salePrice()).isEqualByComparingTo("1200000");
+        assertThat(priced.items().get(0).lineTotal()).isEqualByComparingTo("2400000");
+        assertThat(priced.status()).isEqualTo("PENDING"); // còn chờ kho + rủi ro
+
+        lowRisk(order.id());
+        send(Topics.INVENTORY_EVENTS, EventTypes.INVENTORY_RESERVED, String.valueOf(order.id()),
+                new InventoryReserved(order.id(), List.of(new ReservedLine(1L, 2))));
+        awaitStatus(order.id(), "AWAITING_PAYMENT");
+        awaitEvent(EventTypes.PAYMENT_REQUESTED, order.id());
+        assertThat(orderEvents).filteredOn(e -> e.is(EventTypes.PAYMENT_REQUESTED)
+                        && String.valueOf(order.id()).equals(e.aggregateId()))
+                .singleElement().satisfies(e ->
+                        assertThat(e.payload().get("amount").decimalValue()).isEqualByComparingTo("2160000"));
+    }
+
+    @Test
+    void promotionRejected_cancelsOrder_withReason() {
+        OrderDto order = orderService.createOrder(CUSTOMER, new CreateOrderRequest(
+                List.of(new ItemRequest(2L, 1)), "Địa chỉ test", "MOCK_CARD", "HETLUOT"));
+        lowRisk(order.id());
+        send(Topics.INVENTORY_EVENTS, EventTypes.INVENTORY_RESERVED, String.valueOf(order.id()),
+                new InventoryReserved(order.id(), List.of(new ReservedLine(2L, 1))));
+        await().atMost(Duration.ofSeconds(20)).until(() -> orders.findById(order.id()).orElseThrow().isInventoryReserved());
+        // Chưa định giá khuyến mãi → chưa được yêu cầu thanh toán
+        sleep(500);
+        assertThat(orders.findById(order.id()).orElseThrow().getStatus().name()).isEqualTo("PENDING");
+        assertThat(countEvents(EventTypes.PAYMENT_REQUESTED, order.id())).isZero();
+
+        send(Topics.PROMOTION_EVENTS, EventTypes.PROMOTION_REJECTED, String.valueOf(order.id()),
+                new PromotionRejected(order.id(), 42L, "HETLUOT", "Mã HETLUOT đã hết lượt sử dụng"));
+        awaitStatus(order.id(), "CANCELLED");
+        awaitEvent(EventTypes.ORDER_CANCELLED, order.id()); // Inventory hoàn kho
+        assertThat(orders.findById(order.id()).orElseThrow().getCancelReason()).contains("hết lượt");
+    }
+
     // ------------------------------------------------------------------ helpers
+
+    /** Qua cả kiểm tra rủi ro lẫn định giá khuyến mãi (không có ưu đãi). */
+    private void clearChecks(long orderId) {
+        lowRisk(orderId);
+        noPromotion(orderId);
+    }
+
+    private void noPromotion(long orderId) {
+        send(Topics.PROMOTION_EVENTS, EventTypes.PROMOTION_APPLIED, String.valueOf(orderId),
+                new PromotionApplied(orderId, 42L, null, List.of(), BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
+                        "Không có ưu đãi"));
+    }
+
+    private void lowRisk(long orderId) {
+        risk(orderId, 5, "LOW", false);
+    }
+
+    private void risk(long orderId, int score, String level, boolean review) {
+        send(Topics.FRAUD_ALERT_EVENTS, EventTypes.RISK_ASSESSED, String.valueOf(orderId),
+                new RiskAssessed(orderId, 42L, BigDecimal.ONE, score, level, review,
+                        List.of(new RiskSignal("TEST", score, "Tín hiệu kiểm thử"))));
+    }
+
+    private EventEnvelope createdEvent(long orderId) {
+        return orderEvents.stream().filter(e -> e.is(EventTypes.ORDER_CREATED)
+                && String.valueOf(orderId).equals(e.aggregateId())).findFirst().orElseThrow();
+    }
+
 
     private static CreateOrderRequest request(long productId, int qty) {
         return new CreateOrderRequest(List.of(new ItemRequest(productId, qty)), "Địa chỉ test", "MOCK_CARD");

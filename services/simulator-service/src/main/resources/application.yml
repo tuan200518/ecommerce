@@ -24,14 +24,30 @@ shop:
     new-customer-rate: 0.03       # đăng ký tài khoản mới
     wave: true                    # lưu lượng dao động theo hình sin (giờ cao điểm / thấp điểm)
     auto-restock: true            # nhân viên kho ảo nhập hàng khi sắp hết
-    auto-fulfill: true            # nhân viên ảo chuyển đơn CONFIRMED → SHIPPING → DELIVERED
+    auto-fulfill: true            # nhân viên kho/giao hàng ảo xử lý vận đơn: đóng gói → bàn giao → đang giao → đã giao
+    suspicious-rate: 0.01         # "khách đáng ngờ": tài khoản mới đặt đơn rất lớn → Fraud Service gắn cờ
+    review-rate: 0.15             # khách quay lại đánh giá / hỏi đáp sản phẩm đã nhận
+    auto-risk-review: true        # nhân viên xác minh ảo xử lý đơn bị gắn cờ (≈45 giây)
+    voucher-rate: 0.25            # khách nhập mã giảm giá công khai (chỉ khi báo giá cho thấy mã hợp lệ)
+    flash-sale-rate: 0.3          # khách "săn" sản phẩm đang flash sale (nếu còn suất)
     customer-count: ${SEED_CUSTOMERS:50}
     customer-password: Customer@123
     staff-email: warehouse@shop.local
     staff-password: Manager@123
+    analyst-email: analyst@shop.local
+    analyst-password: Analyst@123
 
 management:
   endpoints:
     web:
       exposure:
-        include: health,info
+        include: health,info,prometheus
+  metrics:
+    tags:
+      application: ${spring.application.name}
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+    # Simulator gọi API với URL chứa id → nhãn uri không giới hạn; metric phía client không cần cho giám sát
+    enable:
+      http.client.requests: false

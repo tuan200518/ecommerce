@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 # Dockerfile dùng chung cho mọi microservice.
-# Stage build KHÔNG phụ thuộc ARG SERVICE → BuildKit build reactor Maven đúng 1 lần rồi dùng lại cho cả 10 image.
+# Stage build KHÔNG phụ thuộc ARG SERVICE → BuildKit build reactor Maven đúng 1 lần rồi dùng lại cho mọi image service.
 
 FROM maven:3.9-eclipse-temurin-21 AS build
 WORKDIR /workspace

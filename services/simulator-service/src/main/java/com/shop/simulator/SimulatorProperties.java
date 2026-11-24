@@ -17,8 +17,15 @@ public record SimulatorProperties(
         boolean wave,
         boolean autoRestock,
         boolean autoFulfill,
+        double suspiciousRate,
+        double reviewRate,
+        boolean autoRiskReview,
+        double voucherRate,
+        double flashSaleRate,
         int customerCount,
         String customerPassword,
         String staffEmail,
-        String staffPassword) {
+        String staffPassword,
+        String analystEmail,
+        String analystPassword) {
 }

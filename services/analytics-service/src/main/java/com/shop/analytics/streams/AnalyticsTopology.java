@@ -50,6 +50,8 @@ import java.util.Map;
  * user/cart/order ─▶ người dùng hoạt động trong 5 phút (hopping window)
  * tất cả          ─▶ bộ đếm tổng (đơn tạo, xác nhận, hủy, thanh toán, thêm giỏ...) → phễu chuyển đổi
  * inventory-events ─▶ tồn kho mới nhất, cảnh báo LOW_STOCK
+ * fraud-alert-events ─▶ cảnh báo ORDER_FLAGGED (đơn nghi ngờ gian lận)
+ * user-activity / shipping / review-events ─▶ bộ đếm (lượt xem, tìm kiếm, giao thành công, đánh giá)
  * </pre>
  */
 public class AnalyticsTopology {
@@ -67,7 +69,13 @@ public class AnalyticsTopology {
             Map.entry(EventTypes.PAYMENT_REFUNDED, "payments_refunded"),
             Map.entry(EventTypes.CART_ITEM_ADDED, "cart_adds"),
             Map.entry(EventTypes.USER_REGISTERED, "users_registered"),
-            Map.entry(EventTypes.USER_LOGGED_IN, "logins"));
+            Map.entry(EventTypes.USER_LOGGED_IN, "logins"),
+            Map.entry(EventTypes.PRODUCT_VIEWED, "product_views"),
+            Map.entry(EventTypes.SEARCH_PERFORMED, "searches"),
+            Map.entry(EventTypes.ORDER_FLAGGED, "orders_flagged"),
+            Map.entry(EventTypes.RISK_REVIEWED, "risk_reviews"),
+            Map.entry(EventTypes.SHIPMENT_DELIVERED, "shipments_delivered"),
+            Map.entry(EventTypes.REVIEW_SUBMITTED, "reviews"));
 
     private final ObjectMapper mapper;
     private final long orderSpikeThreshold;
@@ -86,14 +94,19 @@ public class AnalyticsTopology {
         KStream<String, EventEnvelope> inventory = events(builder, Topics.INVENTORY_EVENTS);
         KStream<String, EventEnvelope> users = events(builder, Topics.USER_EVENTS);
         KStream<String, EventEnvelope> carts = events(builder, Topics.CART_EVENTS);
+        KStream<String, EventEnvelope> activity = events(builder, Topics.USER_ACTIVITY_EVENTS);
+        KStream<String, EventEnvelope> fraud = events(builder, Topics.FRAUD_ALERT_EVENTS);
+        KStream<String, EventEnvelope> shipping = events(builder, Topics.SHIPPING_EVENTS);
+        KStream<String, EventEnvelope> reviews = events(builder, Topics.REVIEW_EVENTS);
 
         revenue(payments);
         ordersPerMinute(orders);
         paymentFailures(payments);
         ordersByStatus(orders);
         productSales(orders);
-        activeUsers(users, carts, orders);
-        counters(orders, payments, carts, users);
+        activeUsers(users, carts, orders, activity);
+        counters(orders, payments, carts, users, activity, fraud, shipping, reviews);
+        fraudAlerts(fraud);
         inventory(inventory);
     }
 
@@ -244,15 +257,17 @@ public class AnalyticsTopology {
     // ------------------------------------------------------------------ Người dùng hoạt động
 
     private void activeUsers(KStream<String, EventEnvelope> users, KStream<String, EventEnvelope> carts,
-                             KStream<String, EventEnvelope> orders) {
+                             KStream<String, EventEnvelope> orders, KStream<String, EventEnvelope> activity) {
         KStream<String, String> logins = users.filter((k, e) -> e.is(EventTypes.USER_LOGGED_IN))
                 .mapValues(e -> e.payload().path("userId").asText());
         KStream<String, String> cartActivity = carts.mapValues(e -> e.payload().path("userId").asText());
         KStream<String, String> buyers = orders.filter((k, e) -> e.is(EventTypes.ORDER_CREATED))
                 .mapValues(e -> e.payload().path("userId").asText());
+        // Khách đã đăng nhập xem/tìm sản phẩm (userId null với khách vãng lai → bị lọc bên dưới)
+        KStream<String, String> browsers = activity.mapValues(e -> e.payload().path("userId").asText(""));
 
-        logins.merge(cartActivity).merge(buyers)
-                .filter((k, userId) -> userId != null && !userId.isBlank())
+        logins.merge(cartActivity).merge(buyers).merge(browsers)
+                .filter((k, userId) -> userId != null && !userId.isBlank() && !"null".equals(userId))
                 .map((k, userId) -> KeyValue.pair("all", userId))
                 .groupByKey(Grouped.with(str, str))
                 .windowedBy(TimeWindows.ofSizeAndGrace(Duration.ofMinutes(5), GRACE).advanceBy(Duration.ofMinutes(1)))
@@ -269,8 +284,10 @@ public class AnalyticsTopology {
     // ------------------------------------------------------------------ Bộ đếm tổng (phễu chuyển đổi)
 
     private void counters(KStream<String, EventEnvelope> orders, KStream<String, EventEnvelope> payments,
-                          KStream<String, EventEnvelope> carts, KStream<String, EventEnvelope> users) {
-        orders.merge(payments).merge(carts).merge(users)
+                          KStream<String, EventEnvelope> carts, KStream<String, EventEnvelope> users,
+                          KStream<String, EventEnvelope> activity, KStream<String, EventEnvelope> fraud,
+                          KStream<String, EventEnvelope> shipping, KStream<String, EventEnvelope> reviews) {
+        orders.merge(payments).merge(carts).merge(users).merge(activity).merge(fraud).merge(shipping).merge(reviews)
                 .filter((k, e) -> COUNTERS.containsKey(e.eventType()))
                 .map((k, e) -> KeyValue.pair(COUNTERS.get(e.eventType()), e.eventId()))
                 .groupByKey(Grouped.with(str, str))
@@ -278,6 +295,24 @@ public class AnalyticsTopology {
                 .toStream()
                 .filter((name, c) -> c != null)
                 .map((name, c) -> metric(new MetricUpdate("counter", name, name, null, null, c, c, null)))
+                .to(Topics.ANALYTICS_EVENTS, Produced.with(str, str));
+    }
+
+    // ------------------------------------------------------------------ Gian lận
+
+    /** Mỗi đơn bị Fraud Service gắn cờ → một cảnh báo trên Dashboard (id theo đơn nên không trùng). */
+    private void fraudAlerts(KStream<String, EventEnvelope> fraud) {
+        fraud.filter((k, e) -> e.is(EventTypes.ORDER_FLAGGED))
+                .map((k, e) -> {
+                    JsonNode p = e.payload();
+                    List<String> reasons = new ArrayList<>();
+                    p.path("signals").forEach(s -> reasons.add(s.path("detail").asText()));
+                    return alert(new Alert("ORDER_FLAGGED:" + p.path("orderId").asText(), "ORDER_FLAGGED", "WARNING",
+                            "Đơn #" + p.path("orderId").asText() + " nghi ngờ gian lận (" + p.path("score").asInt() + " điểm)",
+                            String.join("; ", reasons),
+                            e.occurredAt() == null ? System.currentTimeMillis() : e.occurredAt().toEpochMilli(),
+                            Map.of("orderId", p.path("orderId").asLong(), "score", p.path("score").asInt())));
+                })
                 .to(Topics.ANALYTICS_EVENTS, Produced.with(str, str));
     }
 

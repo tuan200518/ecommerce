@@ -52,6 +52,29 @@ final class RandomData {
         return pick(SEARCH);
     }
 
+    private static final List<String> GOOD = List.of("Sản phẩm đúng mô tả, giao nhanh.", "Chất lượng tốt so với giá.",
+            "Đóng gói cẩn thận, sẽ ủng hộ tiếp.", "Dùng ổn định sau một tuần.", "Rất hài lòng!");
+    private static final List<String> MEH = List.of("Tạm ổn, giao hơi chậm.", "Chất lượng trung bình.",
+            "Đúng giá tiền, không có gì nổi bật.");
+    private static final List<String> BAD = List.of("Không giống ảnh minh họa.", "Hàng lỗi nhẹ, đang chờ đổi.",
+            "Giao trễ, đóng gói sơ sài.");
+    private static final List<String> QUESTIONS = List.of("Sản phẩm bảo hành bao lâu ạ?", "Có xuất hóa đơn VAT không?",
+            "Có màu khác không shop?", "Bao lâu thì giao tới Hà Nội?", "Hàng chính hãng không ạ?");
+
+    /** Số sao lệch về phía tích cực như thực tế: phần lớn 4-5 sao. */
+    static int rating() {
+        int r = rnd().nextInt(100);
+        return r < 55 ? 5 : r < 80 ? 4 : r < 90 ? 3 : r < 95 ? 2 : 1;
+    }
+
+    static String reviewComment(int rating) {
+        return pick(rating >= 4 ? GOOD : rating == 3 ? MEH : BAD);
+    }
+
+    static String question() {
+        return pick(QUESTIONS);
+    }
+
     static long thinkMillis(int min, int max) {
         return min + rnd().nextInt(Math.max(1, max - min));
     }

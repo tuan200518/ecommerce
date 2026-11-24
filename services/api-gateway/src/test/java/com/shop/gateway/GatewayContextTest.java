@@ -19,6 +19,7 @@ class GatewayContextTest {
                 .extracting(r -> r.getId())
                 .contains("auth-service", "user-service", "product-service", "cart-service", "order-service",
                         "inventory-service", "payment-service", "notification-service", "analytics-service",
-                        "simulator-service");
+                        "simulator-service", "fraud-service", "loyalty-service", "shipping-service",
+                        "review-service", "promotion-service", "audit-service");
     }
 }

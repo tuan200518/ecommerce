@@ -4,13 +4,17 @@ import { api } from '../../api/client';
 import type { Availability, Product } from '../../api/types';
 import { useAuth } from '../../auth/AuthContext';
 import { ErrorBox, Loading } from '../../components/Common';
+import { ProductQuestions, ProductReviews } from '../../components/Reviews';
 import { money } from '../../utils/format';
+import { FlashPrice } from '../../components/Promotions';
+import { useFlashOffers } from '../../hooks/useFlashSales';
 
 export default function ProductDetailPage() {
   const { id } = useParams();
   const { user } = useAuth();
   const navigate = useNavigate();
   const [product, setProduct] = useState<Product | null>(null);
+  const offers = useFlashOffers();
   const [stock, setStock] = useState<Availability | null>(null);
   const [image, setImage] = useState<string | null>(null);
   const [qty, setQty] = useState(1);
@@ -48,6 +52,7 @@ export default function ProductDetailPage() {
   if (!product) return <Loading />;
 
   return (
+    <>
     <div className="detail card">
       <div className="gallery">
         <div className="gallery-main">{image ? <img src={image} alt={product.name} /> : <span>📦</span>}</div>
@@ -63,7 +68,7 @@ export default function ProductDetailPage() {
         <Link to={`/?categoryId=${product.categoryId ?? ''}`} className="muted small">{product.categoryName}</Link>
         <h1>{product.name}</h1>
         <div className="muted small">SKU: {product.sku}</div>
-        <div className="price big">{money(product.price)}</div>
+        <FlashPrice price={product.price} offer={offers[product.id]} big />
         {stock && (stock.inStock
           ? <div className={`stock ${stock.available <= 10 ? 'low' : ''}`}>Còn {stock.available} sản phẩm</div>
           : <div className="stock out">Tạm hết hàng</div>)}
@@ -78,5 +83,8 @@ export default function ProductDetailPage() {
         <ErrorBox error={error} />
       </div>
     </div>
+    <ProductReviews productId={product.id} />
+    <ProductQuestions productId={product.id} />
+    </>
   );
 }

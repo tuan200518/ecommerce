@@ -15,6 +15,11 @@ interface Settings {
   wave: boolean;
   autoRestock: boolean;
   autoFulfill: boolean;
+  suspiciousRate: number;
+  reviewRate: number;
+  autoRiskReview: boolean;
+  voucherRate: number;
+  flashSaleRate: number;
 }
 
 interface Entry {
@@ -44,9 +49,17 @@ const KIND: Record<string, { icon: string; label: string }> = {
   ABANDON_CART: { icon: '🧺', label: 'Bỏ giỏ' },
   REGISTER: { icon: '🆕', label: 'Đăng ký' },
   RESTOCK: { icon: '📦', label: 'Nhập kho' },
+  PACK: { icon: '📦', label: 'Đóng gói' },
   SHIP: { icon: '🚚', label: 'Giao hàng' },
   DELIVER: { icon: '✅', label: 'Đã giao' },
   BURST: { icon: '⚡', label: 'Mua dồn dập' },
+  SUSPICIOUS: { icon: '🕵️', label: 'Khách đáng ngờ' },
+  RISK_REVIEW: { icon: '🛡️', label: 'Xác minh rủi ro' },
+  REVIEW: { icon: '⭐', label: 'Đánh giá' },
+  QUESTION: { icon: '❓', label: 'Hỏi đáp' },
+  FLASH_SALE: { icon: '⚡', label: 'Săn flash sale' },
+  VOUCHER: { icon: '🎟️', label: 'Dùng mã giảm giá' },
+  REDEEM: { icon: '🎁', label: 'Đổi điểm' },
   ERROR: { icon: '⚠️', label: 'Lỗi' },
 };
 
@@ -56,6 +69,10 @@ const RATES: { key: keyof Settings; label: string; hint: string }[] = [
   { key: 'paymentFailureRate', label: 'Thẻ bị từ chối', hint: 'chọn MOCK_FAIL → kích hoạt luồng bù Saga' },
   { key: 'cancelRate', label: 'Hủy sau khi đặt', hint: 'khách đổi ý vài giây sau' },
   { key: 'newCustomerRate', label: 'Khách mới đăng ký', hint: 'tạo tài khoản mới' },
+  { key: 'suspiciousRate', label: 'Khách đáng ngờ', hint: 'tài khoản mới đặt đơn rất lớn → Fraud Service gắn cờ' },
+  { key: 'reviewRate', label: 'Quay lại đánh giá / hỏi đáp', hint: 'đánh giá sản phẩm đã nhận' },
+  { key: 'voucherRate', label: 'Dùng mã giảm giá', hint: 'thử mã công khai, chỉ dùng khi báo giá hợp lệ' },
+  { key: 'flashSaleRate', label: 'Săn flash sale', hint: 'thêm sản phẩm đang flash sale (giới hạn mỗi khách)' },
 ];
 
 export default function SimulatorPage() {
@@ -125,6 +142,9 @@ export default function SimulatorPage() {
         <Stat label="Hủy đơn" value={number(s.CANCEL)} />
         <Stat label="Khách ảo" value={number(status.customers)} hint={`${number(s.REGISTER)} đăng ký mới`} />
         <Stat label="Nhập kho / giao / đã giao" value={`${number(s.RESTOCK)} / ${number(s.SHIP)} / ${number(s.DELIVER)}`} />
+        <Stat label="Đáng ngờ / đã xác minh" value={`${number(s.SUSPICIOUS)} / ${number(s.RISK_REVIEW)}`} />
+        <Stat label="Đánh giá / câu hỏi" value={`${number(s.REVIEW)} / ${number(s.QUESTION)}`} />
+        <Stat label="Flash sale / mã / đổi điểm" value={`${number(s.FLASH_SALE)} / ${number(s.VOUCHER)} / ${number(s.REDEEM)}`} />
         <Stat label="Lỗi" value={number(s.ERROR)} bad={(s.ERROR ?? 0) > 0} />
       </div>
 
@@ -153,7 +173,9 @@ export default function SimulatorPage() {
             <label className="radio"><input type="checkbox" checked={draft.autoRestock} onChange={(e) => setDraft({ ...draft, autoRestock: e.target.checked })} />
               Nhân viên kho ảo tự nhập hàng khi sắp hết</label>
             <label className="radio"><input type="checkbox" checked={draft.autoFulfill} onChange={(e) => setDraft({ ...draft, autoFulfill: e.target.checked })} />
-              Nhân viên ảo tự giao đơn (CONFIRMED → SHIPPING → DELIVERED)</label>
+              Nhân viên vận chuyển ảo xử lý vận đơn (đóng gói → bàn giao → đang giao → đã giao)</label>
+            <label className="radio"><input type="checkbox" checked={draft.autoRiskReview} onChange={(e) => setDraft({ ...draft, autoRiskReview: e.target.checked })} />
+              Nhân viên xác minh ảo xử lý đơn bị gắn cờ rủi ro (sau ~45 giây)</label>
             <div className="row">
               <button className="btn btn-primary" onClick={save}>Áp dụng</button>
               <button className="btn btn-ghost" onClick={() => setDraft(status.settings)}>Hoàn tác</button>

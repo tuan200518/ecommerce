@@ -1,7 +1,7 @@
-import { FormEvent, useState } from 'react';
-import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { FormEvent, useEffect, useState } from 'react';
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth, STAFF_ROLES } from '../../auth/AuthContext';
-import { ApiError } from '../../api/client';
+import { api, ApiError } from '../../api/client';
 import { ErrorBox } from '../../components/Common';
 
 const DEMO_ACCOUNTS = [
@@ -61,16 +61,33 @@ export function LoginPage() {
 export function RegisterPage() {
   const { register } = useAuth();
   const navigate = useNavigate();
-  const [form, setForm] = useState({ fullName: '', email: '', password: '' });
+  const [params] = useSearchParams();
+  const [form, setForm] = useState({ fullName: '', email: '', password: '', referralCode: params.get('ref') ?? '' });
+  const [referral, setReferral] = useState<{ valid: boolean; message: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  // Kiểm tra mã giới thiệu (Loyalty Service) khi người dùng ngừng gõ
+  useEffect(() => {
+    const code = form.referralCode.trim();
+    if (!code) {
+      setReferral(null);
+      return;
+    }
+    const t = window.setTimeout(() => {
+      api.get<{ valid: boolean; message: string }>(`/api/loyalty/referrals/${encodeURIComponent(code)}`)
+        .then(setReferral)
+        .catch(() => setReferral(null));
+    }, 400);
+    return () => window.clearTimeout(t);
+  }, [form.referralCode]);
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     setBusy(true);
     setError(null);
     try {
-      await register(form.email, form.password, form.fullName);
+      await register(form.email, form.password, form.fullName, form.referralCode.trim());
       navigate('/');
     } catch (err) {
       if (err instanceof ApiError) {
@@ -90,6 +107,11 @@ export function RegisterPage() {
         <label>Họ tên<input value={form.fullName} onChange={(e) => setForm({ ...form, fullName: e.target.value })} required /></label>
         <label>Email<input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} required /></label>
         <label>Mật khẩu (≥ 6 ký tự)<input type="password" minLength={6} value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} required /></label>
+        <label>Mã giới thiệu (không bắt buộc)
+          <input value={form.referralCode} maxLength={32} placeholder="VD: SHOPAB12CD"
+                 onChange={(e) => setForm({ ...form, referralCode: e.target.value.toUpperCase() })} />
+          {referral && <span className={`small ${referral.valid ? 'text-good' : 'text-bad'}`}>{referral.message}</span>}
+        </label>
         <ErrorBox error={error} />
         <button className="btn btn-primary" disabled={busy}>{busy ? 'Đang tạo…' : 'Đăng ký'}</button>
       </form>

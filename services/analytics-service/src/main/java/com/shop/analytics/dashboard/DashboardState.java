@@ -34,7 +34,9 @@ public class DashboardState {
 
     public record Kpis(long totalOrders, long confirmedOrders, long cancelledOrders, double revenue,
                        long activeUsers, long lowStockProducts, double paymentSuccessRate,
-                       long paymentsCompleted, long paymentsFailed, double cartToOrderRate, double averageOrderValue) {
+                       long paymentsCompleted, long paymentsFailed, double cartToOrderRate, double averageOrderValue,
+                       long productViews, double viewToOrderRate, long flaggedOrders, long shipmentsDelivered,
+                       long reviews) {
     }
 
     public record Snapshot(long generatedAt, Kpis kpis,
@@ -126,6 +128,7 @@ public class DashboardState {
         long completed = counters.getOrDefault("payments_completed", 0L);
         long failed = counters.getOrDefault("payments_failed", 0L);
         long cartAdds = counters.getOrDefault("cart_adds", 0L);
+        long views = counters.getOrDefault("product_views", 0L);
         List<StockInfo> low = stock.values().stream()
                 .filter(s -> s.available() <= s.threshold())
                 .sorted(Comparator.comparingInt(StockInfo::available))
@@ -134,7 +137,10 @@ public class DashboardState {
                 completed + failed == 0 ? 0 : round(100.0 * completed / (completed + failed)),
                 completed, failed,
                 cartAdds == 0 ? 0 : round(100.0 * created / cartAdds),
-                revenuePayments == 0 ? 0 : round(revenueTotal / revenuePayments));
+                revenuePayments == 0 ? 0 : round(revenueTotal / revenuePayments),
+                views, views == 0 ? 0 : round(100.0 * created / views),
+                counters.getOrDefault("orders_flagged", 0L), counters.getOrDefault("shipments_delivered", 0L),
+                counters.getOrDefault("reviews", 0L));
         return new Snapshot(now, kpis,
                 list("revenue_1m", 60), list("revenue_5m", 48), list("revenue_1h", 24),
                 list("orders_1m", 60), list("payment_failed_1m", 60),

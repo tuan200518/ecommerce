@@ -28,7 +28,7 @@ class SimulatorEngineTest {
 
     @Test
     void invalidSettingsAreClampedToSafeRanges() {
-        SimulatorSettings s = new SimulatorSettings(10_000, 0, -1, 2, Double.NaN, 0.5, 0.1, true, true, false)
+        SimulatorSettings s = new SimulatorSettings(10_000, 0, -1, 2, Double.NaN, 0.5, 0.1, true, true, false, 3, -0.5, true, 7, -1)
                 .validated();
         assertThat(s.sessionsPerMinute()).isEqualTo(600);
         assertThat(s.maxConcurrentSessions()).isEqualTo(1);
@@ -36,6 +36,10 @@ class SimulatorEngineTest {
         assertThat(s.cartAbandonRate()).isEqualTo(1);
         assertThat(s.paymentFailureRate()).isZero();
         assertThat(s.cancelRate()).isEqualTo(0.5);
+        assertThat(s.suspiciousRate()).isEqualTo(1);
+        assertThat(s.reviewRate()).isZero();
+        assertThat(s.voucherRate()).isEqualTo(1);
+        assertThat(s.flashSaleRate()).isZero();
     }
 
     @Test

@@ -9,6 +9,8 @@ x-service: &service
   depends_on:
     postgres:
       condition: service_healthy
+    db-init:
+      condition: service_completed_successfully
     kafka:
       condition: service_healthy
 
@@ -18,11 +20,17 @@ x-service-env: &service-env
   DB_PASSWORD: ${POSTGRES_PASSWORD:-shop}
   JWT_SECRET: ${JWT_SECRET:-change-me-please-this-is-a-dev-only-secret-0123456789}
   JAVA_OPTS: ${JAVA_OPTS:--Xms64m -Xmx320m -XX:+UseSerialGC}
+  # 15 service dùng DB × pool mặc định 10 vượt max_connections của PostgreSQL → "too many clients already".
+  # Mỗi service chỉ cần vài kết nối; tổng 15 × 5 = 75 (max_connections=200).
+  SPRING_DATASOURCE_HIKARI_MAXIMUMPOOLSIZE: ${DB_POOL_SIZE:-5}
+  SPRING_DATASOURCE_HIKARI_MINIMUMIDLE: 1
 
 services:
   # ------------------------------------------------------------------ Hạ tầng
   postgres:
     image: postgres:16-alpine
+    # Dư địa cho 15 service dùng DB + db-init + psql thủ công (mặc định chỉ 100)
+    command: ["postgres", "-c", "max_connections=200"]
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-shop}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-shop}
@@ -38,6 +46,19 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+
+  # Tạo database còn thiếu (an toàn khi chạy lại) – cần cho volume PostgreSQL tạo từ phiên bản trước
+  db-init:
+    image: postgres:16-alpine
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:-shop}
+    volumes:
+      - ./infra/postgres/init.sql:/init.sql:ro
+    command: ["psql", "-h", "postgres", "-U", "${POSTGRES_USER:-shop}", "-d", "shop", "-v", "ON_ERROR_STOP=1", "-f", "/init.sql"]
 
   redis:
     image: redis:7.4-alpine
@@ -115,6 +136,21 @@ services:
       NOTIFICATION_SERVICE_URL: http://notification-service:8088
       ANALYTICS_SERVICE_URL: http://analytics-service:8089
       SIMULATOR_SERVICE_URL: http://simulator-service:8091
+      FRAUD_SERVICE_URL: http://fraud-service:8092
+      LOYALTY_SERVICE_URL: http://loyalty-service:8093
+      SHIPPING_SERVICE_URL: http://shipping-service:8094
+      REVIEW_SERVICE_URL: http://review-service:8095
+      PROMOTION_SERVICE_URL: http://promotion-service:8096
+      AUDIT_SERVICE_URL: http://audit-service:8097
+      # Rate limit (đếm qua Redis). Khi chạy k6 tải nặng có thể đặt RATE_LIMIT_ENABLED=false
+      REDIS_HOST: redis
+      RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
+      RATE_LIMIT_LOGIN_PER_MINUTE: ${RATE_LIMIT_LOGIN_PER_MINUTE:-300}
+      RATE_LIMIT_ORDERS_PER_MINUTE: ${RATE_LIMIT_ORDERS_PER_MINUTE:-20}
+      RATE_LIMIT_DEFAULT_PER_MINUTE: ${RATE_LIMIT_DEFAULT_PER_MINUTE:-3000}
+    depends_on:
+      redis:
+        condition: service_healthy
 
   auth-service:
     <<: *service
@@ -126,6 +162,8 @@ services:
     environment:
       <<: *service-env
       DB_URL: jdbc:postgresql://postgres:5432/auth_db
+      AUTH_MAX_FAILED_LOGINS: ${AUTH_MAX_FAILED_LOGINS:-5}
+      AUTH_LOCK_DURATION: ${AUTH_LOCK_DURATION:-PT5M}
 
   user-service:
     <<: *service
@@ -152,6 +190,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      db-init:
+        condition: service_completed_successfully
     environment:
       <<: *service-env
       DB_URL: jdbc:postgresql://postgres:5432/product_db
@@ -179,6 +219,9 @@ services:
       <<: *service-env
       DB_URL: jdbc:postgresql://postgres:5432/order_db
       ORDER_TIMEOUT: ${ORDER_TIMEOUT:-PT2M}
+      ORDER_REVIEW_TIMEOUT: ${ORDER_REVIEW_TIMEOUT:-PT30M}
+      FRAUD_CHECK_ENABLED: ${FRAUD_CHECK_ENABLED:-true}
+      PROMOTION_CHECK_ENABLED: ${PROMOTION_CHECK_ENABLED:-true}
 
   inventory-service:
     <<: *service
@@ -230,6 +273,77 @@ services:
     volumes:
       - streams-state:/tmp/kafka-streams
 
+  # ------------------------------------------------------------------ Dịch vụ mở rộng (Ecommerce 2.0)
+  fraud-service:
+    <<: *service
+    build:
+      context: .
+      dockerfile: docker/service.Dockerfile
+      args:
+        SERVICE: fraud-service
+    environment:
+      <<: *service-env
+      DB_URL: jdbc:postgresql://postgres:5432/fraud_db
+      FRAUD_REVIEW_SCORE: ${FRAUD_REVIEW_SCORE:-70}
+
+  loyalty-service:
+    <<: *service
+    build:
+      context: .
+      dockerfile: docker/service.Dockerfile
+      args:
+        SERVICE: loyalty-service
+    environment:
+      <<: *service-env
+      DB_URL: jdbc:postgresql://postgres:5432/loyalty_db
+
+  shipping-service:
+    <<: *service
+    build:
+      context: .
+      dockerfile: docker/service.Dockerfile
+      args:
+        SERVICE: shipping-service
+    environment:
+      <<: *service-env
+      DB_URL: jdbc:postgresql://postgres:5432/shipping_db
+
+  review-service:
+    <<: *service
+    build:
+      context: .
+      dockerfile: docker/service.Dockerfile
+      args:
+        SERVICE: review-service
+    environment:
+      <<: *service-env
+      DB_URL: jdbc:postgresql://postgres:5432/review_db
+
+  # Flash sale, voucher, đổi điểm lấy voucher; định giá khuyến mãi cho mọi đơn trong Saga
+  promotion-service:
+    <<: *service
+    build:
+      context: .
+      dockerfile: docker/service.Dockerfile
+      args:
+        SERVICE: promotion-service
+    environment:
+      <<: *service-env
+      DB_URL: jdbc:postgresql://postgres:5432/promotion_db
+      PROMOTION_SEED: ${PROMOTION_SEED:-true}
+
+  # Nhật ký kiểm toán (audit-events) + cảnh báo bảo mật
+  audit-service:
+    <<: *service
+    build:
+      context: .
+      dockerfile: docker/service.Dockerfile
+      args:
+        SERVICE: audit-service
+    environment:
+      <<: *service-env
+      DB_URL: jdbc:postgresql://postgres:5432/audit_db
+
   # Khách hàng ảo + nhân viên ảo: tạo lưu lượng mua sắm ngẫu nhiên liên tục qua API Gateway.
   # Điều khiển tại http://localhost:3000/admin/simulator (tài khoản ADMIN).
   simulator-service:
@@ -246,6 +360,38 @@ services:
       SIMULATOR_AUTOSTART: ${SIMULATOR_AUTOSTART:-true}
       SIMULATOR_SESSIONS_PER_MINUTE: ${SIMULATOR_SESSIONS_PER_MINUTE:-20}
       JAVA_OPTS: ${JAVA_OPTS:--Xms64m -Xmx320m -XX:+UseSerialGC}
+
+  # ------------------------------------------------------------------ Giám sát (Prometheus + Grafana)
+  # Prometheus chỉ mở trên localhost (không có xác thực); Grafana: http://localhost:3001 (admin / GRAFANA_PASSWORD)
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=7d
+    ports:
+      - "127.0.0.1:9090:9090"
+    volumes:
+      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./infra/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus-data:/prometheus
+
+  grafana:
+    image: grafana/grafana:11.3.0
+    restart: unless-stopped
+    ports:
+      - "3001:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/shop-overview.json
+    volumes:
+      - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infra/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
 
   # ------------------------------------------------------------------ Frontend (React build + Nginx, proxy /api → gateway)
   frontend:
@@ -272,3 +418,5 @@ volumes:
   postgres-data:
   kafka-data:
   streams-state:
+  prometheus-data:
+  grafana-data:

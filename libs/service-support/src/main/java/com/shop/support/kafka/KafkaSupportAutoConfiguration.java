@@ -3,11 +3,15 @@ package com.shop.support.kafka;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.shop.common.event.Topics;
 import com.shop.support.ShopProperties;
+import com.shop.support.correlation.CorrelationRecordInterceptor;
+import org.springframework.kafka.listener.RecordInterceptor;
 import org.apache.kafka.clients.admin.NewTopic;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.springframework.boot.autoconfigure.kafka.DefaultKafkaProducerFactoryCustomizer;
 import org.apache.kafka.common.TopicPartition;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
+import org.springframework.beans.factory.ObjectProvider;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
@@ -47,6 +51,13 @@ public class KafkaSupportAutoConfiguration {
         return new EventReader(mapper);
     }
 
+    /** Gắn correlationId từ header Kafka vào thread trong lúc listener xử lý message. */
+    @Bean
+    @ConditionalOnMissingBean(RecordInterceptor.class)
+    public RecordInterceptor<Object, Object> correlationRecordInterceptor() {
+        return new CorrelationRecordInterceptor();
+    }
+
     /**
      * Khi Kafka ngừng hoạt động, send() không chờ metadata quá 10 giây (mặc định 60 giây)
      * → Outbox relay nhanh chóng thử lại ở lần quét sau thay vì chiếm thread scheduler.
@@ -75,9 +86,12 @@ public class KafkaSupportAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean(CommonErrorHandler.class)
-    public DefaultErrorHandler kafkaErrorHandler(KafkaTemplate<Object, Object> template, ShopProperties props) {
+    public DefaultErrorHandler kafkaErrorHandler(KafkaTemplate<Object, Object> template, ShopProperties props,
+                                                ObjectProvider<MeterRegistry> meters) {
         DeadLetterPublishingRecoverer recoverer = new DeadLetterPublishingRecoverer(template,
                 (record, ex) -> {
+                    // Metric shop_kafka_dlt_total{topic}: Prometheus cảnh báo khi có message rơi vào DLT
+                    meters.ifAvailable(registry -> registry.counter("shop.kafka.dlt", "topic", record.topic()).increment());
                     log.error("Đưa message vào DLT sau khi retry thất bại: topic={} partition={} offset={} key={} lỗi={}",
                             record.topic(), record.partition(), record.offset(), record.key(), ex.getMessage());
                     return new TopicPartition(record.topic() + Topics.DLT_SUFFIX, -1);

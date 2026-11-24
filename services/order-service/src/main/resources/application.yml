@@ -29,12 +29,21 @@ shop:
     # Quá thời gian này mà đơn chưa được giữ hàng + thanh toán → hủy (Saga timeout)
     processing-timeout: ${ORDER_TIMEOUT:PT2M}
     max-quantity-per-item: 20
+    # Đơn bị Fraud Service đưa vào xác minh (UNDER_REVIEW) quá thời hạn này mà chưa được duyệt → hủy
+    review-timeout: ${ORDER_REVIEW_TIMEOUT:PT30M}
+    # false → không chờ Fraud Service (chạy được khi không triển khai fraud-service)
+    fraud-check-enabled: ${FRAUD_CHECK_ENABLED:true}
+    # false → không chờ Promotion Service (không áp dụng flash sale / voucher)
+    promotion-check-enabled: ${PROMOTION_CHECK_ENABLED:true}
+    # Miễn phí vận chuyển cho đơn từ ngưỡng này; dưới ngưỡng tính phí cố định
+    free-shipping-threshold: 500000
+    shipping-fee: 30000
 
 management:
   endpoints:
     web:
       exposure:
-        include: health,info,metrics
+        include: health,info,metrics,prometheus
 
 logging:
   level:

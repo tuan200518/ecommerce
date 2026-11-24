@@ -4,10 +4,22 @@ server:
 spring:
   application:
     name: api-gateway
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      timeout: 500ms
 
 shop:
   jwt:
     secret: ${JWT_SECRET:change-me-please-this-is-a-dev-only-secret-0123456789}
+  rate-limit:
+    enabled: ${RATE_LIMIT_ENABLED:true}
+    login-per-minute: ${RATE_LIMIT_LOGIN_PER_MINUTE:300}
+    register-per-minute: ${RATE_LIMIT_REGISTER_PER_MINUTE:100}
+    orders-per-minute: ${RATE_LIMIT_ORDERS_PER_MINUTE:20}
+    promotion-quote-per-minute: ${RATE_LIMIT_PROMOTION_QUOTE_PER_MINUTE:60}
+    default-per-minute: ${RATE_LIMIT_DEFAULT_PER_MINUTE:3000}
   cors:
     allowed-origins: ${CORS_ORIGINS:http://localhost:5173,http://localhost:3000}
   services:
@@ -21,12 +33,28 @@ shop:
     notification: ${NOTIFICATION_SERVICE_URL:http://localhost:8088}
     analytics: ${ANALYTICS_SERVICE_URL:http://localhost:8089}
     simulator: ${SIMULATOR_SERVICE_URL:http://localhost:8091}
+    fraud: ${FRAUD_SERVICE_URL:http://localhost:8092}
+    loyalty: ${LOYALTY_SERVICE_URL:http://localhost:8093}
+    shipping: ${SHIPPING_SERVICE_URL:http://localhost:8094}
+    review: ${REVIEW_SERVICE_URL:http://localhost:8095}
+    promotion: ${PROMOTION_SERVICE_URL:http://localhost:8096}
+    audit: ${AUDIT_SERVICE_URL:http://localhost:8097}
 
+# Actuator chạy ở cổng quản trị RIÊNG (không publish ra host): trước đây /actuator/metrics, /actuator/gateway
+# nằm trên cổng 8080 công khai và không đi qua bộ lọc JWT. Prometheus scrape cổng này trong mạng Docker.
 management:
+  server:
+    port: ${MANAGEMENT_PORT:9080}
   endpoints:
     web:
       exposure:
-        include: health,info,metrics,gateway
+        include: health,info,metrics,prometheus,gateway
+  metrics:
+    tags:
+      application: ${spring.application.name}
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
 
 logging:
   level:

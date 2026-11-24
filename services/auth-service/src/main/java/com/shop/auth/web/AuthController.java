@@ -11,6 +11,7 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -37,7 +38,10 @@ public class AuthController {
 
     public record RegisterRequest(@NotBlank @Email @Size(max = 255) String email,
                                   @NotBlank @Size(min = 6, max = 72, message = "Mật khẩu từ 6 đến 72 ký tự") String password,
-                                  @NotBlank @Size(max = 150) String fullName) {
+                                  @NotBlank @Size(max = 150) String fullName,
+                                  // Mã giới thiệu (tùy chọn) – Loyalty Service kiểm tra và thưởng khi đủ điều kiện
+                                  @Size(max = 32) @Pattern(regexp = "^[A-Za-z0-9-]*$", message = "Mã giới thiệu không hợp lệ")
+                                  String referralCode) {
     }
 
     public record LoginRequest(@NotBlank String email, @NotBlank String password) {
@@ -52,7 +56,7 @@ public class AuthController {
     @PostMapping("/register")
     @ResponseStatus(HttpStatus.CREATED)
     public TokenResponse register(@Valid @RequestBody RegisterRequest req) {
-        return service.register(req.email(), req.password(), req.fullName());
+        return service.register(req.email(), req.password(), req.fullName(), req.referralCode());
     }
 
     @PostMapping("/login")
@@ -84,12 +88,12 @@ public class AuthController {
     @PutMapping("/users/{id}/roles")
     public UserDto changeRoles(AuthenticatedUser user, @PathVariable long id, @Valid @RequestBody RolesRequest req) {
         Access.requireAnyRole(user, Roles.ADMIN);
-        return service.changeRoles(user.userId(), id, req.roles());
+        return service.changeRoles(user, id, req.roles());
     }
 
     @PutMapping("/users/{id}/status")
     public UserDto changeStatus(AuthenticatedUser user, @PathVariable long id, @RequestBody StatusRequest req) {
         Access.requireAnyRole(user, Roles.ADMIN);
-        return service.setEnabled(user.userId(), id, req.enabled());
+        return service.setEnabled(user, id, req.enabled());
     }
 }

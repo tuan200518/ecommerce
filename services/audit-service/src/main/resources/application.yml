@@ -1,0 +1,40 @@
+server:
+  port: ${PORT:8097}
+
+spring:
+  application:
+    name: audit-service
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/audit_db}
+    username: ${DB_USER:shop}
+    password: ${DB_PASSWORD:shop}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: update
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:9094}
+    consumer:
+      group-id: audit-service
+      auto-offset-reset: earliest
+    listener:
+      concurrency: 3
+    producer:
+      acks: all
+
+shop:
+  audit:
+    # Một IP đăng nhập sai vào từ chừng này tài khoản khác nhau trong cửa sổ → cảnh báo dò mật khẩu hàng loạt
+    suspicious-ip-emails: ${AUDIT_SUSPICIOUS_IP_EMAILS:5}
+    suspicious-ip-window: PT10M
+    alert-max-age: PT10M
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+
+logging:
+  level:
+    com.shop: INFO

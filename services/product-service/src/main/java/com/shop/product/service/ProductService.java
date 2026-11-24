@@ -12,6 +12,8 @@ import com.shop.product.web.ProductDtos.CategoryDto;
 import com.shop.product.web.ProductDtos.CategoryRequest;
 import com.shop.product.web.ProductDtos.ProductDto;
 import com.shop.product.web.ProductDtos.ProductRequest;
+import com.shop.common.security.AuthenticatedUser;
+import com.shop.support.audit.AuditTrail;
 import com.shop.support.outbox.OutboxService;
 import com.shop.support.web.ApiException;
 import com.shop.support.web.PageResponse;
@@ -35,11 +37,14 @@ public class ProductService {
     private final ProductRepository products;
     private final CategoryRepository categories;
     private final OutboxService outbox;
+    private final AuditTrail auditTrail;
 
-    public ProductService(ProductRepository products, CategoryRepository categories, OutboxService outbox) {
+    public ProductService(ProductRepository products, CategoryRepository categories, OutboxService outbox,
+                          AuditTrail auditTrail) {
         this.products = products;
         this.categories = categories;
         this.outbox = outbox;
+        this.auditTrail = auditTrail;
     }
 
     // ------------------------------------------------------------------ Truy vấn
@@ -75,6 +80,12 @@ public class ProductService {
 
     @Transactional
     public ProductDto create(ProductRequest req) {
+        return create(req, null);
+    }
+
+    /** @param actor nhân viên thao tác (null khi seed dữ liệu) → ghi audit log */
+    @Transactional
+    public ProductDto create(ProductRequest req, AuthenticatedUser actor) {
         if (products.existsBySku(req.sku())) {
             throw ApiException.conflict("SKU " + req.sku() + " đã tồn tại");
         }
@@ -83,27 +94,32 @@ public class ProductService {
         p.replaceImages(req.images());
         products.save(p);
         publish(EventTypes.PRODUCT_CREATED, p, req.initialStock());
+        audit(actor, "PRODUCT_CREATED", p.getId(), p.getSku() + " – " + p.getName() + ", giá " + p.getPrice());
         return ProductDto.from(p);
     }
 
     @Caching(evict = @CacheEvict(cacheNames = PRODUCT_CACHE, key = "#id"))
     @Transactional
-    public ProductDto update(long id, ProductRequest req) {
+    public ProductDto update(long id, ProductRequest req, AuthenticatedUser actor) {
         Product p = load(id);
+        BigDecimal oldPrice = p.getPrice();
+        String oldName = p.getName();
         p.update(req.name(), req.description(), req.price(), category(req.categoryId()), req.imageUrl());
         if (req.images() != null) {
             p.replaceImages(req.images());
         }
         publish(EventTypes.PRODUCT_UPDATED, p, null);
+        audit(actor, "PRODUCT_UPDATED", p.getId(), changes(oldName, p.getName(), oldPrice, p.getPrice()));
         return ProductDto.from(p);
     }
 
     @CacheEvict(cacheNames = PRODUCT_CACHE, key = "#id")
     @Transactional
-    public ProductDto setActive(long id, boolean active) {
+    public ProductDto setActive(long id, boolean active, AuthenticatedUser actor) {
         Product p = load(id);
         p.setActive(active);
         publish(active ? EventTypes.PRODUCT_UPDATED : EventTypes.PRODUCT_DISCONTINUED, p, null);
+        audit(actor, active ? "PRODUCT_ACTIVATED" : "PRODUCT_DISCONTINUED", p.getId(), p.getName());
         return ProductDto.from(p);
     }
 
@@ -112,30 +128,57 @@ public class ProductService {
     @CacheEvict(cacheNames = CATEGORY_CACHE, allEntries = true)
     @Transactional
     public CategoryDto createCategory(CategoryRequest req) {
-        if (categories.existsBySlug(req.slug())) {
-            throw ApiException.conflict("Slug đã tồn tại");
-        }
-        return CategoryDto.from(categories.save(new Category(req.name(), req.slug(), req.description())));
+        return createCategory(req, null);
     }
 
     @CacheEvict(cacheNames = CATEGORY_CACHE, allEntries = true)
     @Transactional
-    public CategoryDto updateCategory(long id, CategoryRequest req) {
-        Category c = categories.findById(id).orElseThrow(() -> ApiException.notFound("Không tìm thấy danh mục"));
-        c.update(req.name(), req.slug(), req.description());
+    public CategoryDto createCategory(CategoryRequest req, AuthenticatedUser actor) {
+        if (categories.existsBySlug(req.slug())) {
+            throw ApiException.conflict("Slug đã tồn tại");
+        }
+        Category c = categories.save(new Category(req.name(), req.slug(), req.description()));
+        audit(actor, "CATEGORY_CREATED", c.getId(), c.getName());
         return CategoryDto.from(c);
     }
 
     @CacheEvict(cacheNames = CATEGORY_CACHE, allEntries = true)
     @Transactional
-    public void deleteCategory(long id) {
+    public CategoryDto updateCategory(long id, CategoryRequest req, AuthenticatedUser actor) {
+        Category c = categories.findById(id).orElseThrow(() -> ApiException.notFound("Không tìm thấy danh mục"));
+        c.update(req.name(), req.slug(), req.description());
+        audit(actor, "CATEGORY_UPDATED", id, req.name() + " (" + req.slug() + ")");
+        return CategoryDto.from(c);
+    }
+
+    @CacheEvict(cacheNames = CATEGORY_CACHE, allEntries = true)
+    @Transactional
+    public void deleteCategory(long id, AuthenticatedUser actor) {
         if (products.countByCategoryId(id) > 0) {
             throw ApiException.conflict("Danh mục đang có sản phẩm, không thể xóa");
         }
         categories.deleteById(id);
+        audit(actor, "CATEGORY_DELETED", id, null);
     }
 
     // ------------------------------------------------------------------ Nội bộ
+
+    private void audit(AuthenticatedUser actor, String action, Object id, String detail) {
+        if (actor != null) {
+            auditTrail.record(actor, action, action.startsWith("CATEGORY") ? "CATEGORY" : "PRODUCT", id, detail);
+        }
+    }
+
+    private static String changes(String oldName, String newName, BigDecimal oldPrice, BigDecimal newPrice) {
+        StringBuilder sb = new StringBuilder(newName);
+        if (!oldName.equals(newName)) {
+            sb.append(" (đổi tên từ \"").append(oldName).append("\")");
+        }
+        if (oldPrice.compareTo(newPrice) != 0) {
+            sb.append(", giá ").append(oldPrice.toPlainString()).append(" → ").append(newPrice.toPlainString());
+        }
+        return sb.toString();
+    }
 
     private void publish(String type, Product p, Integer initialStock) {
         Category c = p.getCategory();

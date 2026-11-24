@@ -91,13 +91,77 @@ public class ShopClient {
                 Map.of("quantity", quantity, "note", "Nhân viên kho ảo nhập hàng"), token);
     }
 
-    public JsonNode ordersByStatus(String token, String status) {
-        return call(HttpMethod.GET, "/api/orders?status=" + status + "&size=100", null, token);
+    public JsonNode shipments(String token, String status) {
+        return call(HttpMethod.GET, "/api/shipments?status=" + status + "&size=50", null, token);
     }
 
-    public JsonNode updateOrderStatus(String token, long orderId, String status) {
-        return call(HttpMethod.PUT, "/api/orders/" + orderId + "/status",
-                Map.of("status", status, "note", "Cập nhật bởi nhân viên giao hàng ảo"), token);
+    public JsonNode updateShipment(String token, long shipmentId, String status) {
+        return call(HttpMethod.PUT, "/api/shipments/" + shipmentId + "/status",
+                Map.of("status", status, "note", "Nhân viên vận chuyển ảo"), token);
+    }
+
+    public JsonNode riskCases(String token, String status) {
+        return call(HttpMethod.GET, "/api/fraud/cases?status=" + status + "&size=50", null, token);
+    }
+
+    public JsonNode reviewRisk(String token, long orderId, boolean approved, String note) {
+        return call(HttpMethod.POST, "/api/fraud/cases/" + orderId + "/review",
+                Map.of("approved", approved, "note", note), token);
+    }
+
+    // ------------------------------------------------------------------ Sau mua hàng
+
+    public JsonNode myOrders(String token) {
+        return call(HttpMethod.GET, "/api/orders/my?size=10", null, token);
+    }
+
+    public JsonNode reviewEligibility(String token, long productId) {
+        return call(HttpMethod.GET, "/api/reviews/products/" + productId + "/eligibility", null, token);
+    }
+
+    public JsonNode submitReview(String token, long productId, int rating, String comment) {
+        return call(HttpMethod.POST, "/api/reviews/products/" + productId,
+                Map.of("rating", rating, "comment", comment), token);
+    }
+
+    public JsonNode askQuestion(String token, long productId, String content) {
+        return call(HttpMethod.POST, "/api/reviews/products/" + productId + "/questions",
+                Map.of("content", content), token);
+    }
+
+    // ------------------------------------------------------------------ Khuyến mãi / đổi điểm
+
+    public JsonNode flashSales() {
+        return call(HttpMethod.GET, "/api/promotions/flash-sales/active", null, null);
+    }
+
+    public JsonNode publicVouchers() {
+        return call(HttpMethod.GET, "/api/promotions/vouchers/public", null, null);
+    }
+
+    public JsonNode quote(String token, List<Map<String, Object>> items, String voucherCode) {
+        Map<String, Object> body = new java.util.HashMap<>();
+        body.put("items", items);
+        body.put("voucherCode", voucherCode);
+        return call(HttpMethod.POST, "/api/promotions/quote", body, token);
+    }
+
+    public JsonNode placeOrder(String token, List<Map<String, Object>> items, String address, String paymentMethod,
+                               String voucherCode) {
+        Map<String, Object> body = new java.util.HashMap<>(Map.of("items", items, "shippingAddress", address,
+                "paymentMethod", paymentMethod));
+        if (voucherCode != null) {
+            body.put("voucherCode", voucherCode);
+        }
+        return call(HttpMethod.POST, "/api/orders", body, token);
+    }
+
+    public JsonNode loyalty(String token) {
+        return call(HttpMethod.GET, "/api/loyalty/me", null, token);
+    }
+
+    public JsonNode redeem(String token, String rewardId) {
+        return call(HttpMethod.POST, "/api/loyalty/rewards/" + rewardId + "/redeem", Map.of(), token);
     }
 
     // ------------------------------------------------------------------ HTTP

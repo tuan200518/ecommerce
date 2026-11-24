@@ -3,12 +3,14 @@ import { api } from '../../api/client';
 import type { Order, Page } from '../../api/types';
 import { ErrorBox, Loading, Modal, Pagination, StatusBadge } from '../../components/Common';
 import { useAuth } from '../../auth/AuthContext';
-import { dateTime, money, ORDER_STATUS_LABEL, PAYMENT_METHOD_LABEL } from '../../utils/format';
+import { Link } from 'react-router-dom';
+import { dateTime, money, ORDER_STATUS_LABEL, PAYMENT_METHOD_LABEL, RISK_LEVEL_LABEL } from '../../utils/format';
 
+// Giao hàng (SHIPPING / DELIVERED) do Shipping Service điều khiển qua trang Vận chuyển; ở đây chỉ còn thao tác hủy.
 const NEXT: Record<string, string[]> = {
-  CONFIRMED: ['SHIPPING', 'CANCELLED'],
-  SHIPPING: ['DELIVERED'],
+  CONFIRMED: ['CANCELLED'],
   PENDING: ['CANCELLED'],
+  UNDER_REVIEW: ['CANCELLED'],
   AWAITING_PAYMENT: ['CANCELLED'],
 };
 
@@ -71,6 +73,15 @@ export default function OrdersAdminPage() {
       {detail && (
         <Modal title={`Đơn hàng #${detail.id}`} onClose={() => setDetail(null)}>
           <div className="row space-between"><StatusBadge status={detail.status} /><span>{money(detail.totalAmount)}</span></div>
+          {detail.riskLevel && (
+            <p className="small">
+              Rủi ro: <span className={`badge badge-${detail.riskLevel.toLowerCase()}`}>{RISK_LEVEL_LABEL[detail.riskLevel] ?? detail.riskLevel}</span>{' '}
+              {detail.riskScore} điểm {detail.status === 'UNDER_REVIEW' && <Link to="/admin/fraud">→ xác minh</Link>}
+            </p>
+          )}
+          {['CONFIRMED', 'SHIPPING', 'DELIVERED'].includes(detail.status) && (
+            <p className="small"><Link to="/admin/shipments">→ Quản lý vận đơn</Link></p>
+          )}
           {detail.cancelReason && <div className="alert alert-error">{detail.cancelReason}</div>}
           {detail.items.map((i) => <div key={i.productId} className="line"><span>{i.productName} × {i.quantity}</span><span>{money(i.lineTotal)}</span></div>)}
           <p className="small">Giao đến: {detail.shippingAddress}</p>

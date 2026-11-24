@@ -38,6 +38,12 @@ public class ApiGatewayApplication {
                 .route("notification-service", r -> r.path("/api/notifications/**").uri(urls.notification()))
                 .route("analytics-service", r -> r.path("/api/analytics/**").uri(urls.analytics()))
                 .route("simulator-service", r -> r.path("/api/simulator", "/api/simulator/**").uri(urls.simulator()))
+                .route("fraud-service", r -> r.path("/api/fraud/**").uri(urls.fraud()))
+                .route("loyalty-service", r -> r.path("/api/loyalty/**").uri(urls.loyalty()))
+                .route("shipping-service", r -> r.path("/api/shipments", "/api/shipments/**").uri(urls.shipping()))
+                .route("review-service", r -> r.path("/api/reviews/**").uri(urls.review()))
+                .route("promotion-service", r -> r.path("/api/promotions/**").uri(urls.promotion()))
+                .route("audit-service", r -> r.path("/api/audit", "/api/audit/**").uri(urls.audit()))
                 .build();
     }
 

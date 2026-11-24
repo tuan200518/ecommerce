@@ -11,7 +11,10 @@ import java.util.concurrent.atomic.AtomicLong;
 /** Bộ đếm thống kê + nhật ký hoạt động gần nhất của khách/nhân viên ảo. */
 public class ActivityLog {
 
-    public enum Kind { SESSION, BROWSE_ONLY, ABANDON_CART, ORDER, CANCEL, REGISTER, RESTOCK, SHIP, DELIVER, BURST, ERROR }
+    public enum Kind {
+        SESSION, BROWSE_ONLY, ABANDON_CART, ORDER, CANCEL, REGISTER, RESTOCK, PACK, SHIP, DELIVER, BURST,
+        SUSPICIOUS, RISK_REVIEW, REVIEW, QUESTION, FLASH_SALE, VOUCHER, REDEEM, ERROR
+    }
 
     public record Entry(Instant at, Kind kind, String actor, String message) {
     }

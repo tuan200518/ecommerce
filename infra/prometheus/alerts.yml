@@ -1,0 +1,89 @@
+# Luật cảnh báo – xem trạng thái tại http://localhost:9090/alerts (và trên dashboard Grafana).
+# Ngưỡng là giá trị khởi đầu cho môi trường demo; chỉnh theo lưu lượng thực tế.
+groups:
+  - name: shop-availability
+    rules:
+      - alert: ServiceDown
+        expr: up{job="shop-services"} == 0
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: "Service {{ $labels.service }} không phản hồi"
+          description: "Prometheus không scrape được {{ $labels.instance }} trong hơn 1 phút."
+
+      - alert: HighErrorRate
+        expr: |
+          sum by (application) (rate(http_server_requests_seconds_count{status=~"5..", uri!~"/actuator.*"}[5m]))
+            / sum by (application) (rate(http_server_requests_seconds_count{uri!~"/actuator.*"}[5m])) > 0.05
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.application }}: hơn 5% request lỗi 5xx"
+          description: "Tỷ lệ lỗi 5 phút gần nhất: {{ $value | humanizePercentage }}."
+
+      - alert: SlowResponses
+        expr: |
+          histogram_quantile(0.95, sum by (le, application) (rate(http_server_requests_seconds_bucket{uri!~"/actuator.*"}[5m]))) > 2
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.application }}: p95 thời gian phản hồi > 2 giây"
+
+  - name: shop-messaging
+    rules:
+      - alert: OutboxBacklog
+        expr: shop_outbox_pending > 100
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.application }}: {{ $value }} sự kiện outbox chưa gửi lên Kafka"
+          description: "Outbox relay không theo kịp hoặc Kafka không nhận được message."
+
+      - alert: MessagesInDeadLetterTopic
+        expr: increase(shop_kafka_dlt_total[10m]) > 0
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.application }}: có message bị đưa vào {{ $labels.topic }}-dlt"
+          description: "Message xử lý lỗi sau khi retry – kiểm tra log và topic DLT trên Kafka UI."
+
+      - alert: KafkaConsumerLag
+        expr: max by (application) (kafka_consumer_fetch_manager_records_lag_max) > 1000
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.application }}: consumer chậm hơn {{ $value }} message"
+
+  - name: shop-resources
+    rules:
+      - alert: DatabasePoolExhausted
+        expr: max by (application) (hikaricp_connections_pending) > 0
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: "{{ $labels.application }}: request đang phải chờ kết nối CSDL"
+          description: "Pool kết nối đầy – kiểm tra DB_POOL_SIZE và max_connections của PostgreSQL."
+
+      - alert: HighHeapUsage
+        expr: |
+          sum by (application) (jvm_memory_used_bytes{area="heap"}) / sum by (application) (jvm_memory_max_bytes{area="heap"}) > 0.9
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.application }}: heap JVM dùng trên 90%"
+
+  - name: shop-security
+    rules:
+      - alert: LoginFailureSpike
+        expr: sum(rate(shop_auth_logins_total{result!="success"}[5m])) * 60 > 30
+        for: 2m
+        labels: { severity: warning }
+        annotations:
+          summary: "Hơn 30 lần đăng nhập thất bại mỗi phút"
+          description: "Có thể đang bị dò mật khẩu – xem Nhật ký kiểm toán (/admin/audit)."
+
+      - alert: RateLimitTriggered
+        expr: sum by (rule) (rate(shop_gateway_rate_limited_total[5m])) * 60 > 10
+        for: 5m
+        labels: { severity: info }
+        annotations:
+          summary: "Gateway chặn hơn 10 request/phút ở nhóm {{ $labels.rule }}"
