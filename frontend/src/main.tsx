@@ -27,6 +27,11 @@ import ReviewsAdminPage from './pages/admin/ReviewsAdminPage';
 import PromotionsAdminPage from './pages/admin/PromotionsAdminPage';
 import AuditPage from './pages/admin/AuditPage';
 import DealsPage from './pages/shop/DealsPage';
+import SupportPage from './pages/shop/SupportPage';
+import TicketPage from './pages/shop/TicketPage';
+import SupportAdminPage from './pages/admin/SupportAdminPage';
+import AlertsPage from './pages/admin/AlertsPage';
+import RecommendationsAdminPage from './pages/admin/RecommendationsAdminPage';
 import { STAFF_ROLES } from './auth/AuthContext';
 import './styles.css';
 
@@ -47,6 +52,8 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
             <Route path="orders/:id" element={<RequireAuth><OrderDetailPage /></RequireAuth>} />
             <Route path="profile" element={<RequireAuth><ProfilePage /></RequireAuth>} />
             <Route path="loyalty" element={<RequireAuth><LoyaltyPage /></RequireAuth>} />
+            <Route path="support" element={<RequireAuth><SupportPage /></RequireAuth>} />
+            <Route path="support/:id" element={<RequireAuth><TicketPage /></RequireAuth>} />
             <Route path="admin" element={<RequireAuth roles={STAFF_ROLES}><AdminLayout /></RequireAuth>}>
               <Route index element={<DashboardPage />} />
               <Route path="orders" element={<OrdersAdminPage />} />
@@ -60,6 +67,9 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
               <Route path="reviews" element={<ReviewsAdminPage />} />
               <Route path="promotions" element={<PromotionsAdminPage />} />
               <Route path="audit" element={<AuditPage />} />
+              <Route path="support" element={<SupportAdminPage />} />
+              <Route path="alerts" element={<AlertsPage />} />
+              <Route path="recommendations" element={<RecommendationsAdminPage />} />
               <Route path="simulator" element={<SimulatorPage />} />
             </Route>
             <Route path="*" element={<div className="empty">Không tìm thấy trang</div>} />

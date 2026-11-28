@@ -22,10 +22,15 @@ public record SimulatorProperties(
         boolean autoRiskReview,
         double voucherRate,
         double flashSaleRate,
+        double supportRate,
+        boolean autoSupport,
+        double recommendationRate,
         int customerCount,
         String customerPassword,
         String staffEmail,
         String staffPassword,
         String analystEmail,
-        String analystPassword) {
+        String analystPassword,
+        String supportEmail,
+        String supportPassword) {
 }

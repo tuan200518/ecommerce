@@ -49,6 +49,27 @@ Không cần Docker: Kafka dùng **Embedded Kafka (KRaft)**, database dùng **H2
 | `RateLimitFilterTest` | Đăng nhập giới hạn theo IP (429 + Retry-After + metric), đặt hàng giới hạn theo người dùng (không ảnh hưởng người khác cùng IP), Redis lỗi → cho qua, tắt rate limit, chỉ tin `X-Real-IP` từ proxy nội bộ |
 | `JwtAuthenticationFilterTest` | Thêm: phân quyền Promotion/Audit, `X-Client-Ip` client gửi bị ghi đè |
 
+## 2d. Test tự động cho Ecommerce 2.2
+
+| Bộ test | Nội dung |
+|---|---|
+| `AlertRelayTest` | Webhook Alertmanager bắt buộc token; cảnh báo đi tới thông báo trong ứng dụng cho ADMIN + Slack / Discord / Telegram (HTTP server giả trong test) + email; định dạng tiếng Việt, giờ Việt Nam, link Grafana; một kênh lỗi không chặn kênh khác và được ghi trong lịch sử; cảnh báo "đã khôi phục"; API kênh / gửi thử chỉ cho ADMIN |
+| `SupportServiceTest` (6 test) | Chỉ gắn được đơn của chính mình, không xem được yêu cầu người khác (404); luồng hội thoại: nhận xử lý tự động, tin chưa đọc, chờ khách → đang xử lý, giải quyết → khách trả lời mở lại, đóng, đánh giá một lần; ANALYST chỉ xem; ưu tiên cao + quá hạn SLA cảnh báo đúng một lần, hàng đợi sắp theo mức ưu tiên thật, tìm theo `HT-<id>`; sự kiện đơn hàng mới → tin nhắn hệ thống (bỏ qua sự kiện cũ); giới hạn yêu cầu đang mở, tự đóng |
+| `AnalyticsTopologyTest` | Thêm: KPI giảm giá ròng (đơn hủy bị trừ, đơn giảm 0đ không tính), bộ đếm yêu cầu hỗ trợ tạo mới / đã giải quyết |
+| `PromotionServiceTest` | Thêm: hủy đơn phát đúng một `PromotionReleased` |
+| `UpstreamUnavailableFilterTest` | Service phía sau chưa chạy → 503 + Retry-After thay vì 500 |
+| `JwtAuthenticationFilterTest` | Thêm: phân quyền hàng đợi CSKH, lịch sử cảnh báo chỉ ADMIN, webhook nội bộ không công khai |
+
+## 2e. Test tự động cho Ecommerce 2.3
+
+| Bộ test | Nội dung |
+|---|---|
+| `ScoringTest` | Cosine có hệ số tin cậy (cặp hiếm không lấn át cặp nhiều bằng chứng), độ tương đồng nội dung (danh mục > giá > tên), tách từ tiếng Việt bỏ dấu + khớp từ khóa tìm kiếm, suy giảm half-life, hệ số chất lượng Bayes, đa dạng hóa theo danh mục |
+| `RecommendationServiceTest` (7 test) | Mua cùng xếp theo số đơn, đối xứng, bỏ sản phẩm ngừng bán; sự kiện đọc lại chỉ học một lần; "tương tự" kết hợp cùng xem + nội dung, xem lại trong phiên không tạo cặp, sản phẩm mới vẫn có gợi ý (cold start); "Dành cho bạn" cá nhân hóa kèm lý do (đã thêm vào giỏ, đã tìm "…"), không gợi ý lại sản phẩm đã tương tác, khách mới → thịnh hành, không bao giờ rỗng kể cả khi khách đã tương tác với cả danh mục, giải thích hồ sơ chỉ cho nhân viên; thịnh hành theo trọng số xem/giỏ/mua và theo danh mục; giỏ hàng; CTR + chuyển đổi + doanh thu theo vị trí, một lượt bấm chỉ tính một đơn |
+| `CatalogRepublisherTest` | Product Service phát lại mọi sản phẩm lên product-events với trạng thái hiện tại (đang bán → ProductUpdated, ngừng bán → ProductDiscontinued) |
+| `DashboardSnapshotTest` | Snapshot khôi phục đủ KPI, chuỗi doanh thu, top sản phẩm, cảnh báo (không tính lại cảnh báo cũ); đọc tiếp ngay sau offset cuối; topic tạo lại → bỏ snapshot; không ghi lại khi không đổi; snapshot hỏng → dựng lại từ đầu |
+| `JwtAuthenticationFilterTest` | Thêm: API gợi ý công khai (khách đã đăng nhập vẫn được chuyển danh tính), thống kê / hồ sơ gợi ý chỉ cho nhân viên |
+
 ## 3. Kịch bản demo nâng cao (mục 9.1)
 
 ### A. Real-time Sales Analytics
@@ -188,3 +209,35 @@ Trên Kafka UI, mọi message của luồng (order-events, inventory-events, fra
 3. `docker compose stop kafka` vài phút → `shop_outbox_pending` tăng trên dashboard (OutboxBacklog), giảm về 0 khi Kafka chạy lại.
 
 > Kiểm thử tải với k6: rate limit mặc định cho phép 20 đơn/phút mỗi tài khoản và 300 lượt đăng nhập/phút mỗi IP. Khi chạy kịch bản cường độ cao (nhiều đơn/tài khoản), đặt `RATE_LIMIT_ENABLED=false` (và `PROMOTION_CHECK_ENABLED=false` nếu chỉ đo Saga gốc) rồi `docker compose up -d api-gateway order-service`.
+
+## 8. Kịch bản demo Ecommerce 2.2
+
+### L. Hỗ trợ khách hàng – chat realtime
+
+1. Cửa sổ 1: `customer@shop.local` → mở một đơn hàng → **💬 Cần hỗ trợ về đơn này?** → chọn chủ đề "Thanh toán / hoàn tiền", gửi. Yêu cầu `HT-…` ưu tiên **Cao** (SLA 30 phút).
+2. Cửa sổ 2 (ẩn danh): `support@shop.local / Support@123` → **🎧 Hỗ trợ khách hàng**: yêu cầu xuất hiện ngay trong tab "Chưa nhận" (SSE), chuông có thông báo "Yêu cầu hỗ trợ mới". Mở yêu cầu → trả lời → tự nhận xử lý, trạng thái "Đang xử lý".
+3. Tin nhắn hiện ngay ở cửa sổ khách (không cần tải lại) kèm thông báo "CSKH đã trả lời". Khách trả lời → nhân viên thấy ngay.
+4. Nhân viên đổi trạng thái **Đã giải quyết** → khách thấy ô đánh giá sao; khách gửi thêm tin → yêu cầu tự mở lại. Hủy đơn liên quan → tin nhắn hệ thống "Đơn hàng #… chuyển sang Đã hủy".
+5. Dashboard: KPI "Yêu cầu hỗ trợ" tăng; Nhật ký kiểm toán có dòng `SUPPORT_TICKET_UPDATED`.
+
+### M. Cảnh báo qua email/chat
+
+1. ADMIN → **🚨 Cảnh báo hệ thống** → **Gửi cảnh báo thử**: kết quả `in-app: OK; email: OK`; mở Mailpit `http://localhost:8025` thấy email "🔵 [INFO] Cảnh báo thử nghiệm".
+2. `docker compose stop payment-service` → sau ~3,5–4 phút (Prometheus `for: 3m` để không báo động giả lúc khởi động + Alertmanager gom 30 giây): chuông ADMIN và Mailpit nhận "🔴 [CRITICAL] Service payment-service không phản hồi" (nhiều service cùng ngừng → một tin liệt kê tất cả); Alertmanager `http://localhost:9093` hiện cảnh báo. `docker compose start payment-service` → "✅ Đã khôi phục…".
+3. Slack / Discord / Telegram: đặt biến trong `.env` (vd. `ALERT_DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...`) → `docker compose up -d notification-service` → gửi cảnh báo thử. Email thật: đổi `SMTP_*` (Gmail cần App Password).
+4. Cảnh báo nghiệp vụ: Simulator → **Mua dồn dập** 60 đơn / 30 giây → Dashboard hiện "Đơn hàng tăng đột biến" và vài phút sau email/chat nhận "Cảnh báo nghiệp vụ ORDER_SPIKE".
+
+## 9. Kịch bản demo Ecommerce 2.3
+
+### N. Gợi ý sản phẩm (AI Recommendation)
+
+1. Để Simulator chạy vài phút (mô hình học từ toàn bộ lịch sử có sẵn ngay khi recommendation-service khởi động lần đầu).
+2. Khách vãng lai mở trang chủ: khối **🔥 Đang thịnh hành**. Đăng nhập `customer@shop.local`, xem vài tai nghe, tìm "bàn phím", thêm một món vào giỏ → về trang chủ: khối **✨ Dành cho bạn** với lý do từng món ("Vì bạn đã thêm … vào giỏ", "Vì bạn đã tìm “bàn phím”", "Vì bạn quan tâm …").
+3. Trang sản phẩm: **🛍️ Thường được mua cùng** (số đơn) và **Sản phẩm tương tự** ("Khách xem sản phẩm này cũng xem", "Cùng danh mục …, giá tương đương"). Giỏ hàng: **Có thể bạn cũng cần**.
+4. Bấm một sản phẩm được gợi ý rồi đặt hàng và thanh toán → ADMIN/ANALYST mở **🧠 Gợi ý sản phẩm**: lượt bấm, CTR, "Sản phẩm bán nhờ gợi ý" và doanh thu theo từng vị trí (Simulator cũng bấm gợi ý với tỷ lệ "Bấm vào gợi ý"). Nhập userId của khách ở ô "Vì sao khách nhận được gợi ý này?" để xem hồ sơ sở thích.
+
+### O. Dashboard khởi động nhanh
+
+1. Mở Dashboard `/admin`, ghi nhớ các KPI. `docker compose restart analytics-service`.
+2. Khi service lên lại (~1 phút), Dashboard có ngay số liệu cũ và tiếp tục cập nhật; log có dòng "Đã khôi phục Dashboard từ snapshot … đọc tiếp analytics-events từ offset {…}" thay vì đọc lại cả topic.
+

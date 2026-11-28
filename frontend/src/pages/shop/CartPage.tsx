@@ -4,6 +4,7 @@ import { api } from '../../api/client';
 import type { Cart } from '../../api/types';
 import { Empty, ErrorBox, Loading } from '../../components/Common';
 import { money } from '../../utils/format';
+import { RecommendationStrip } from '../../components/Recommendations';
 
 export default function CartPage() {
   const [cart, setCart] = useState<Cart | null>(null);
@@ -22,6 +23,7 @@ export default function CartPage() {
   if (!cart) return error ? <ErrorBox error={error} /> : <Loading />;
 
   return (
+    <>
     <div className="card">
       <h2>Giỏ hàng</h2>
       <ErrorBox error={error} />
@@ -66,5 +68,10 @@ export default function CartPage() {
         </>
       )}
     </div>
+    {cart.items.length > 0 && (
+      <RecommendationStrip path="cart" query={{ productIds: cart.items.map((i) => i.productId).join(','), limit: 6 }}
+                           title="Có thể bạn cũng cần" />
+    )}
+    </>
   );
 }

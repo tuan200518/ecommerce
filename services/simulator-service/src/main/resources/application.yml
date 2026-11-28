@@ -30,12 +30,17 @@ shop:
     auto-risk-review: true        # nhân viên xác minh ảo xử lý đơn bị gắn cờ (≈45 giây)
     voucher-rate: 0.25            # khách nhập mã giảm giá công khai (chỉ khi báo giá cho thấy mã hợp lệ)
     flash-sale-rate: 0.3          # khách "săn" sản phẩm đang flash sale (nếu còn suất)
+    support-rate: 0.03            # khách gửi yêu cầu hỗ trợ về một đơn đã đặt
+    auto-support: true            # nhân viên CSKH ảo (support@shop.local) trả lời và giải quyết yêu cầu
+    recommendation-rate: 0.35     # khách bấm vào sản phẩm được gợi ý ("Dành cho bạn", "Tương tự"...)
     customer-count: ${SEED_CUSTOMERS:50}
     customer-password: Customer@123
     staff-email: warehouse@shop.local
     staff-password: Manager@123
     analyst-email: analyst@shop.local
     analyst-password: Analyst@123
+    support-email: support@shop.local
+    support-password: Support@123
 
 management:
   endpoints:

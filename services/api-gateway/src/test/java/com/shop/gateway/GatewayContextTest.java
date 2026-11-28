@@ -20,6 +20,7 @@ class GatewayContextTest {
                 .contains("auth-service", "user-service", "product-service", "cart-service", "order-service",
                         "inventory-service", "payment-service", "notification-service", "analytics-service",
                         "simulator-service", "fraud-service", "loyalty-service", "shipping-service",
-                        "review-service", "promotion-service", "audit-service");
+                        "review-service", "promotion-service", "audit-service", "support-service",
+                        "recommendation-service");
     }
 }

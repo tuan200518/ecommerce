@@ -154,7 +154,7 @@ class PromotionServiceTest {
     }
 
     @Test
-    void flashSale_reservesQuota_enforcesPerUserLimit_andReleasesOnCancel() {
+    void flashSale_reservesQuota_enforcesPerUserLimit_andReleasesOnCancel() throws Exception {
         flashSale(laptop, "15000000", 3, 2);
 
         JsonNode first = order(601, laptop, "20000000", 2, null, "0");
@@ -179,6 +179,12 @@ class PromotionServiceTest {
         cancel(first.get("orderId").asLong(), 601);
         cancel(first.get("orderId").asLong(), 601);
         assertThat(sold(laptop)).isEqualTo(1);
+        // Đúng một PromotionReleased (Analytics trừ lại 10 triệu giảm giá) dù sự kiện hủy đến 2 lần
+        List<String> released = jdbc.queryForList("SELECT payload FROM outbox_events WHERE event_type = ? AND message_key = ?",
+                String.class, EventTypes.PROMOTION_RELEASED, first.get("orderId").asText());
+        assertThat(released).hasSize(1);
+        assertThat(mapper.readTree(released.get(0)).path("payload").path("totalDiscount").decimalValue())
+                .isEqualByComparingTo("10000000");
         assertThat(order(601, laptop, "20000000", 2, null, "0").get("_type").asText())
                 .isEqualTo(EventTypes.PROMOTION_APPLIED);
     }

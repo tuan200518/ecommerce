@@ -12,19 +12,20 @@
 | Topic | Producer | Consumer | Sự kiện |
 |---|---|---|---|
 | `user-events` | auth | user, analytics, fraud, loyalty | UserRegistered (kèm `referralCode`), UserLoggedIn, UserRolesChanged |
-| `product-events` | product | order, cart, inventory, promotion | ProductCreated, ProductUpdated, ProductDiscontinued |
-| `user-activity-events` | product | analytics | ProductViewed, SearchPerformed |
-| `cart-events` | cart | analytics | CartItemAdded, CartItemUpdated, CartItemRemoved, CartCleared |
-| `order-events` | order | inventory, payment, cart, analytics, fraud, shipping, loyalty, review, promotion | OrderCreated, PaymentRequested, OrderConfirmed, OrderCancelled, OrderStatusChanged |
+| `product-events` | product | order, cart, inventory, promotion, recommendation | ProductCreated, ProductUpdated, ProductDiscontinued |
+| `user-activity-events` | product | analytics, recommendation | ProductViewed, SearchPerformed |
+| `cart-events` | cart | analytics, recommendation | CartItemAdded, CartItemUpdated, CartItemRemoved, CartCleared |
+| `order-events` | order | inventory, payment, cart, analytics, fraud, shipping, loyalty, review, promotion, support, recommendation | OrderCreated, PaymentRequested, OrderConfirmed, OrderCancelled, OrderStatusChanged |
 | `inventory-events` | inventory | order, analytics | InventoryReserved, InventoryRejected, InventoryCommitted, InventoryReleased, StockUpdated, StockLow |
 | `payment-events` | payment | order, analytics, fraud | PaymentCompleted, PaymentFailed, PaymentRefunded |
 | `fraud-alert-events` | fraud | order, analytics | RiskAssessed (mọi đơn), OrderFlagged (cần xác minh), RiskReviewed |
 | `shipping-events` | shipping | order, analytics | ShipmentCreated, ShipmentStatusChanged, ShipmentDelivered |
 | `loyalty-events` | loyalty | promotion | PointsEarned, PointsReversed, TierChanged, PointsRedeemed (đổi điểm → voucher) |
-| `promotion-events` | promotion | order | PromotionApplied (mọi đơn, kể cả giảm 0đ), PromotionRejected, VoucherIssued |
+| `promotion-events` | promotion | order, analytics | PromotionApplied (mọi đơn, kể cả giảm 0đ), PromotionRejected, PromotionReleased (đơn hủy → hoàn suất/lượt), VoucherIssued |
+| `support-events` | support | analytics | TicketCreated, TicketStatusChanged, TicketMessagePosted |
 | `audit-events` | mọi service có thao tác quản trị / bảo mật | audit | AuditRecorded |
-| `review-events` | review | loyalty, analytics | ReviewSubmitted, ReviewVisibilityChanged |
-| `notification-events` | order, inventory, payment, fraud, loyalty, review, promotion, audit | notification | NotificationRequested |
+| `review-events` | review | loyalty, analytics, recommendation | ReviewSubmitted, ReviewVisibilityChanged |
+| `notification-events` | order, inventory, payment, fraud, loyalty, review, promotion, audit, support | notification | NotificationRequested |
 | `analytics-events` | Kafka Streams (analytics) | analytics (dashboard) | MetricUpdated, AlertRaised |
 | `<topic>-dlt` | Spring Kafka error handler | (vận hành) | Message lỗi sau khi hết số lần retry |
 
@@ -211,7 +212,7 @@ Chỉ người có đơn **đã giao** chứa sản phẩm mới được đánh
 
 ### Hành vi người dùng
 
-Product Service ghi `ProductViewed` (xem chi tiết) và `SearchPerformed` (tìm kiếm có từ khóa) lên `user-activity-events` qua Outbox, best-effort (lỗi ghi nhận không làm hỏng request). Analytics dùng cho phễu **xem → thêm giỏ → đặt hàng → thanh toán → xác nhận**, KPI tỷ lệ xem→đặt hàng và người dùng hoạt động; sẵn sàng làm dữ liệu cho Recommendation sau này.
+Product Service ghi `ProductViewed` (xem chi tiết) và `SearchPerformed` (tìm kiếm có từ khóa) lên `user-activity-events` qua Outbox, best-effort (lỗi ghi nhận không làm hỏng request). Analytics dùng cho phễu **xem → thêm giỏ → đặt hàng → thanh toán → xác nhận**, KPI tỷ lệ xem→đặt hàng và người dùng hoạt động; đồng thời là dữ liệu chính của Recommendation Service (mục 10).
 
 ### Lưu ý triển khai
 
@@ -257,3 +258,98 @@ Audit Service phát cảnh báo cho ADMIN khi có tài khoản bị tạm khóa,
 - 15 service dùng chung một PostgreSQL: `max_connections=200`, pool mỗi service `DB_POOL_SIZE=5`. Thêm service mới cần kiểm tra lại ngân sách kết nối.
 - `point_transactions.type` có giá trị mới `REDEMPTION` → [`LoyaltySchemaPatches`](../services/loyalty-service/src/main/java/com/shop/loyalty/domain/LoyaltySchemaPatches.java) bỏ CHECK constraint cũ (cùng cách với `OrderSchemaPatches`). Cột mới (`users.failed_login_attempts`, `users.locked_until`, các cột khuyến mãi trên `orders`/`order_items`) đều cho phép NULL.
 - Cột giá trị voucher tên `discount_value` (`VALUE` là từ khóa SQL của H2).
+
+## 9. Cảnh báo qua email/chat & Hỗ trợ khách hàng (Ecommerce 2.2)
+
+### Luồng cảnh báo
+
+```mermaid
+flowchart LR
+    S[17 service<br/>/actuator/prometheus] --> P[Prometheus<br/>alerts.yml]
+    A[analytics-service<br/>AlertRaised] -->|shop_analytics_alerts_total| P
+    SUP[support-service] -->|shop_support_tickets_overdue| P
+    P -->|cảnh báo đang bật| AM[Alertmanager<br/>gom nhóm, chống lặp, inhibit]
+    AM -->|webhook + Bearer token| N[notification-service<br/>/internal/alerts]
+    N --> IA[Chuông thông báo ADMIN<br/>SSE]
+    N --> SL[Slack] & DC[Discord] & TG[Telegram]
+    N --> EM[Email SMTP<br/>mặc định Mailpit]
+```
+
+- **Alertmanager** ([`alertmanager.yml`](../infra/alertmanager/alertmanager.yml)) gom cảnh báo theo `alertname + service/application/rule/type`, chờ 30 giây (10 giây với `critical`) để gộp, nhắc lại sau 4 giờ (1 giờ với `critical`), gửi cả thông báo **đã khôi phục**. `ServiceDown` chặn các cảnh báo warning/info của cùng service để tránh "bão" tin nhắn; mọi `ServiceDown` gom chung một nhóm và luật chỉ bật sau 3 phút (18 JVM cần 1–2,5 phút để khởi động) → khởi động lại cả hệ thống không còn gửi hàng chục email. notification-service cũng gộp mọi cảnh báo trong một webhook thành **một** tin nhắn liệt kê từng đối tượng.
+- **notification-service** ([`AlertRelayService`](../services/notification-service/src/main/java/com/shop/notification/alerting/AlertRelayService.java)) định dạng nội dung tiếng Việt (mức độ, đối tượng, thời điểm theo giờ Việt Nam, link Grafana), tạo thông báo trong ứng dụng cho mọi ADMIN **không qua Kafka** (cảnh báo vẫn đến khi Kafka gặp sự cố), rồi gửi tới từng kênh đã cấu hình. Lỗi một kênh chỉ được ghi lại (`alert_events.deliveries`, metric `shop_alerting_deliveries_total{channel,result}` → cảnh báo `AlertDeliveryFailing`), webhook vẫn trả 200 để Alertmanager không gửi lại gây trùng ở các kênh đã nhận.
+- Kênh cấu hình bằng biến môi trường (`ALERT_SLACK_WEBHOOK_URL`, `ALERT_DISCORD_WEBHOOK_URL`, `ALERT_TELEGRAM_BOT_TOKEN` + `ALERT_TELEGRAM_CHAT_ID`, `ALERT_EMAIL_TO` + `SMTP_*`); để trống = tắt. Mặc định email đi vào **Mailpit** (hộp thư giả lập, không gửi ra Internet).
+- **Cảnh báo nghiệp vụ** của Kafka Streams (đơn tăng đột biến, thanh toán lỗi, tồn kho thấp, đơn nghi gian lận) được đếm thành `shop_analytics_alerts_total{type,severity}` khi Dashboard nhận cảnh báo mới (bỏ qua khi đọc lại topic lúc khởi động) → luật `BusinessAlert` → cùng đường đi ra email/chat.
+- Webhook `/internal/alerts` không có route qua Gateway, cổng service không publish ra host, và vẫn kiểm tra Bearer token (so sánh thời gian hằng).
+
+### Support Service
+
+| Service | Cổng | Tiêu thụ | Phát | Dữ liệu riêng |
+|---|---|---|---|---|
+| `support-service` | 8098 | order-events | support-events, notification-events, audit-events | `tickets`, `ticket_messages`, `order_refs` (read-model) |
+
+Package Java là `com.shop.helpdesk` (không dùng `com.shop.support` – đã thuộc thư viện `service-support`).
+
+```
+OPEN ──CSKH trả lời──▶ IN_PROGRESS ──▶ WAITING_CUSTOMER ──khách trả lời──▶ IN_PROGRESS / OPEN
+  │                       │                                                      │
+  └───────────────────────┴──────────▶ RESOLVED ──3 ngày không phản hồi──▶ CLOSED
+                                         │  ▲
+                              khách trả lời└─┘ (mở lại)
+```
+
+- Khách chỉ gắn được **đơn của chính mình** (kiểm tra trên read-model `order_refs` từ order-events – không gọi REST sang Order Service). Đơn liên quan đổi trạng thái (giao, hủy kèm lý do...) → tin nhắn hệ thống trong mọi yêu cầu đang mở của đơn đó (chỉ với sự kiện mới).
+- **SLA phản hồi đầu tiên** theo mức ưu tiên; chủ đề thanh toán hoặc đơn ≥ 10 triệu mặc định ưu tiên Cao. `SupportJobs` mỗi phút tìm yêu cầu vừa quá hạn → báo nhân viên CSKH (mỗi yêu cầu một lần); gauge `shop_support_tickets_overdue` → cảnh báo `SupportTicketsOverdue` qua Alertmanager. Yêu cầu đã giải quyết tự đóng sau 3 ngày.
+- **Chat realtime** qua SSE ([`SupportHub`](../services/support-service/src/main/java/com/shop/helpdesk/service/SupportHub.java)): kênh theo yêu cầu (khách + nhân viên đang mở) và kênh hàng đợi CSKH; chỉ đẩy sau khi transaction commit. Một instance – khi scale ngang cần phát qua `support-events` tới mọi instance.
+- Đếm tin chưa đọc riêng cho khách / nhân viên; khách trả lời yêu cầu đã giải quyết → mở lại; đánh giá 1–5 sao một lần sau khi giải quyết. Thao tác của nhân viên (nhận xử lý, đổi trạng thái, ưu tiên) ghi audit.
+- Vai trò mới `SUPPORT_AGENT` (tài khoản mẫu `support@shop.local`, tạo cả trên CSDL cũ): xem Dashboard, xử lý hàng đợi CSKH; `ANALYST` chỉ xem.
+
+### Analytics bổ sung
+
+| Chỉ số | Nguồn | Kỹ thuật |
+|---|---|---|
+| Giảm giá khuyến mãi ròng + số đơn hưởng ưu đãi | promotion-events: `PromotionApplied` (giảm > 0) cộng, `PromotionReleased` (đơn hủy) trừ | KTable aggregate |
+| Yêu cầu hỗ trợ tạo mới / đã giải quyết | support-events | Bộ đếm (`TicketStatusChanged` → RESOLVED) |
+
+## 10. Gợi ý sản phẩm & Dashboard khởi động nhanh (Ecommerce 2.3)
+
+### Recommendation Service (cổng 8099, `recommendation_db`)
+
+Bộ gợi ý **lai, học trực tuyến** từ luồng sự kiện – không có job huấn luyện theo lô, không gọi REST sang service khác:
+
+| Nguồn | Học được gì |
+|---|---|
+| product-events | Danh mục (tên, danh mục, giá, ảnh, còn bán) – read-model `rec_products` |
+| order-events (`OrderConfirmed`) | Cặp **mua cùng** (`rec_pairs` kind `BOUGHT`, +1 mỗi cặp trong một đơn), số đơn chứa sản phẩm, lượt mua theo ngày, hành vi `BUY` của khách, **chuyển đổi** từ gợi ý |
+| user-activity-events | Cặp **cùng xem** (cùng khách trong 30 phút, kind `VIEWED`), lượt xem theo ngày (cả khách vãng lai), hành vi `VIEW` / `SEARCH` |
+| cart-events (`CartItemAdded`) | Lượt thêm giỏ theo ngày, hành vi `CART` |
+| review-events | Tổng/số điểm đánh giá đang hiển thị → hệ số chất lượng |
+
+Mọi thống kê dùng `occurredAt` của sự kiện, có `IdempotencyGuard`; consumer đọc từ đầu topic nên khi triển khai lần đầu mô hình được dựng từ toàn bộ lịch sử. Bộ đếm tăng bằng `INSERT … ON CONFLICT DO NOTHING` + `UPDATE x = x + ?` (an toàn với 3 consumer thread).
+
+Chấm điểm ([`Scoring`](../services/recommendation-service/src/main/java/com/shop/recommendation/engine/Scoring.java) – hàm thuần, có test):
+
+- **Độ tương đồng item-item**: cosine `cùng(A,B) / √(n(A)·n(B))` nhân độ tin cậy `cùng / (cùng + 2)` – một cặp chỉ xuất hiện một lần không lấn át cặp có nhiều bằng chứng.
+- **Nội dung** (cold start): cùng danh mục 60%, giá tương đương 25% (giảm về 0 khi chênh 4 lần), tên giống nhau 15% (Jaccard, bỏ dấu tiếng Việt).
+- **Thịnh hành**: Σ (xem + 3×giỏ + 5×mua) × 0,5^(tuổi/2 ngày) trong 7 ngày.
+- **Hồ sơ sở thích**: xem 1, giỏ 3, mua 5, tìm kiếm 0,5 × 0,5^(tuổi/3 ngày), trong 30 ngày.
+- **Chất lượng**: điểm đánh giá trung bình Bayes (giả định 3,5★ × 5 đánh giá) → hệ số 0,9–1,1.
+- **Đa dạng hóa**: mỗi danh mục tối đa ~1/3 danh sách "Dành cho bạn" trước khi bù.
+
+"Dành cho bạn" = láng giềng (cùng xem 60% / mua cùng 40%) của tối đa 8 sản phẩm khách tương tác mạnh nhất + thịnh hành trong 2 danh mục quan tâm nhất + sản phẩm khớp 3 từ khóa tìm gần nhất; bỏ sản phẩm khách đã tương tác; thiếu thì bù bằng thịnh hành rồi sản phẩm mới. Mỗi gợi ý giữ **lý do** của thành phần đóng góp nhiều nhất.
+
+**Đo hiệu quả**: mỗi lần trả gợi ý cộng `requests`/`impressions` cho vị trí (`rec_placement_stats`); frontend gửi `POST /clicks` khi khách bấm; `OrderConfirmed` chứa sản phẩm khách đã bấm trong 24 giờ → `conversions` + doanh thu (lượt bấm cuối, mỗi lượt bấm tính một lần). Metric `shop_recommendation_served_total`, `_clicks_total`, `_conversions_total` theo `placement`. Trang quản trị `/admin/recommendations` hiển thị CTR, chuyển đổi và giải thích gợi ý của từng khách.
+
+**Danh mục cho service mới**: Kafka chỉ giữ message 7 ngày nên `ProductCreated` lúc seed dữ liệu đã mất; Product Service ([`CatalogRepublisher`](../services/product-service/src/main/java/com/shop/product/service/CatalogRepublisher.java)) phát lại trạng thái mọi sản phẩm (`ProductUpdated` / `ProductDiscontinued`) khi khởi động và mỗi 24 giờ (`CATALOG_REPUBLISH_INTERVAL`) – các consumer đều áp dụng như upsert nên vô hại.
+
+**Tránh deadlock**: các đơn chứa cùng cặp sản phẩm được xử lý song song trên 3 partition; mọi transaction ghi theo cùng thứ tự `rec_daily` → `rec_product_stats` → `rec_pairs`, productId tăng dần.
+
+Giới hạn: một instance tính trên toàn bộ danh mục trong bộ nhớ (phù hợp vài nghìn sản phẩm); giá trong gợi ý là giá niêm yết (flash sale hiển thị ở frontend); đơn bị hủy sau khi xác nhận không trừ khỏi ma trận mua cùng.
+
+### Dashboard khởi động nhanh
+
+Trước đây mỗi lần khởi động, `AnalyticsEventsConsumer` đọc lại **toàn bộ** `analytics-events` (lớn dần theo thời gian, mỗi message một lệnh upsert) → Dashboard mất vài phút mới có số liệu mới nhất. Nay:
+
+1. `DashboardState` ghi nhận offset cuối đã áp dụng của từng partition; `DashboardSnapshotStore` mỗi 15 giây (và khi tắt) lưu trạng thái + offset + id của topic vào bảng `dashboard_snapshot` (JSON) – chụp dưới cùng một khóa nên luôn khớp nhau.
+2. Khởi động: nạp snapshot trước khi listener chạy → Dashboard có số liệu ngay; khi được gán partition, consumer `seek` tới offset + 1, chỉ đọc phần phát sinh sau snapshot.
+3. An toàn: partition chưa có trong snapshot, topic bị tạo lại (id khác), snapshot hỏng hoặc khác định dạng → dựng lại từ đầu như cũ. Message chồng lấn được áp dụng idempotent. Tắt bằng `DASHBOARD_SNAPSHOT_ENABLED=false`.
+

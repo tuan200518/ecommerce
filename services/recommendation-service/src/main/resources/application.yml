@@ -1,0 +1,44 @@
+server:
+  port: ${PORT:8099}
+
+spring:
+  application:
+    name: recommendation-service
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/recommendation_db}
+    username: ${DB_USER:shop}
+    password: ${DB_PASSWORD:shop}
+  sql:
+    init:
+      mode: always
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:9094}
+    consumer:
+      group-id: recommendation-service
+      # Đọc toàn bộ lịch sử khi chạy lần đầu → mô hình gợi ý được "huấn luyện" từ dữ liệu sẵn có
+      auto-offset-reset: earliest
+    listener:
+      concurrency: 3
+    producer:
+      acks: all
+
+shop:
+  recommendation:
+    co-view-window: ${REC_CO_VIEW_WINDOW:30m}
+    profile-window: ${REC_PROFILE_WINDOW:30d}
+    profile-half-life: ${REC_PROFILE_HALF_LIFE:3d}
+    trending-days: ${REC_TRENDING_DAYS:7}
+    trending-half-life-days: ${REC_TRENDING_HALF_LIFE_DAYS:2}
+    attribution-window: ${REC_ATTRIBUTION_WINDOW:24h}
+    cache-ttl: ${REC_CACHE_TTL:30s}
+    interaction-retention: ${REC_INTERACTION_RETENTION:90d}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+
+logging:
+  level:
+    com.shop: INFO

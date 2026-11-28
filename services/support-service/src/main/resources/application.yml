@@ -1,0 +1,47 @@
+server:
+  port: ${PORT:8098}
+
+spring:
+  application:
+    name: support-service
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/support_db}
+    username: ${DB_USER:shop}
+    password: ${DB_PASSWORD:shop}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: update
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:9094}
+    consumer:
+      group-id: support-service
+      auto-offset-reset: earliest
+    listener:
+      concurrency: 3
+    producer:
+      acks: all
+  mvc:
+    async:
+      request-timeout: -1   # SSE chat
+
+shop:
+  support:
+    # Thời hạn phản hồi đầu tiên theo mức ưu tiên (SLA)
+    sla-urgent: PT15M
+    sla-high: PT30M
+    sla-normal: ${SUPPORT_SLA_NORMAL:PT2H}
+    sla-low: PT8H
+    auto-close-after: P3D
+    max-open-per-customer: 5
+    max-event-age: PT10M
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+
+logging:
+  level:
+    com.shop: INFO

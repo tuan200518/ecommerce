@@ -1,0 +1,45 @@
+# Alertmanager: gom nhóm cảnh báo của Prometheus, chống gửi lặp, rồi chuyển cho notification-service.
+# notification-service quyết định kênh: thông báo trong ứng dụng (ADMIN) + Slack / Discord / Telegram / email
+# (cấu hình bằng biến môi trường ALERT_* / SMTP_* – xem .env.example), nên file này không chứa bí mật của kênh nào.
+#
+# Lưu ý: Alertmanager không đọc biến môi trường trong file cấu hình. Khi đổi ALERT_WEBHOOK_TOKEN, sửa cả
+# "credentials" bên dưới cho trùng.
+global:
+  resolve_timeout: 5m
+
+route:
+  receiver: shop-notification
+  # Mỗi nhóm = một loại cảnh báo trên một service → một tin nhắn
+  group_by: [alertname, service, application, rule, type]
+  group_wait: 30s        # chờ gom các cảnh báo cùng nhóm phát sinh gần nhau
+  group_interval: 5m     # cảnh báo mới trong nhóm đã gửi
+  repeat_interval: 4h    # nhắc lại nếu vẫn chưa khắc phục
+  routes:
+    # Nhiều service cùng ngừng (sự cố hạ tầng, khởi động lại) → MỘT tin nhắn liệt kê mọi service, không phải hàng chục
+    - matchers: [alertname="ServiceDown"]
+      receiver: shop-notification
+      group_by: [alertname]
+      group_wait: 30s
+      group_interval: 2m
+      repeat_interval: 1h
+    # Cảnh báo nghiêm trọng: gửi nhanh hơn, nhắc lại thường hơn
+    - matchers: [severity=~"critical|CRITICAL"]
+      receiver: shop-notification
+      group_wait: 10s
+      repeat_interval: 1h
+
+# Service ngừng hoạt động thì bỏ các cảnh báo hệ quả của chính service đó (lỗi 5xx, chậm...) để tránh "bão" tin nhắn
+inhibit_rules:
+  - source_matchers: [alertname="ServiceDown"]
+    target_matchers: [severity=~"warning|info"]
+    equal: [service]
+
+receivers:
+  - name: shop-notification
+    webhook_configs:
+      - url: http://notification-service:8088/internal/alerts
+        send_resolved: true
+        http_config:
+          authorization:
+            type: Bearer
+            credentials: change-me-alert-webhook-token

@@ -75,7 +75,8 @@ public class AnalyticsTopology {
             Map.entry(EventTypes.ORDER_FLAGGED, "orders_flagged"),
             Map.entry(EventTypes.RISK_REVIEWED, "risk_reviews"),
             Map.entry(EventTypes.SHIPMENT_DELIVERED, "shipments_delivered"),
-            Map.entry(EventTypes.REVIEW_SUBMITTED, "reviews"));
+            Map.entry(EventTypes.REVIEW_SUBMITTED, "reviews"),
+            Map.entry(EventTypes.TICKET_CREATED, "tickets_created"));
 
     private final ObjectMapper mapper;
     private final long orderSpikeThreshold;
@@ -98,6 +99,8 @@ public class AnalyticsTopology {
         KStream<String, EventEnvelope> fraud = events(builder, Topics.FRAUD_ALERT_EVENTS);
         KStream<String, EventEnvelope> shipping = events(builder, Topics.SHIPPING_EVENTS);
         KStream<String, EventEnvelope> reviews = events(builder, Topics.REVIEW_EVENTS);
+        KStream<String, EventEnvelope> promotions = events(builder, Topics.PROMOTION_EVENTS);
+        KStream<String, EventEnvelope> support = events(builder, Topics.SUPPORT_EVENTS);
 
         revenue(payments);
         ordersPerMinute(orders);
@@ -105,9 +108,46 @@ public class AnalyticsTopology {
         ordersByStatus(orders);
         productSales(orders);
         activeUsers(users, carts, orders, activity);
-        counters(orders, payments, carts, users, activity, fraud, shipping, reviews);
+        counters(orders, payments, carts, users, activity, fraud, shipping, reviews.merge(support));
         fraudAlerts(fraud);
         inventory(inventory);
+        promotionDiscount(promotions);
+    }
+
+    // ------------------------------------------------------------------ Giảm giá khuyến mãi (ròng)
+
+    /**
+     * Tổng giảm giá của các đơn có ưu đãi: + PromotionApplied (giảm > 0), − PromotionReleased (đơn bị hủy, đã hoàn
+     * suất/lượt) → KPI "giảm giá khuyến mãi" và số đơn đang hưởng ưu đãi.
+     */
+    private void promotionDiscount(KStream<String, EventEnvelope> promotions) {
+        promotions
+                .filter((k, e) -> (e.is(EventTypes.PROMOTION_APPLIED) && e.payload().path("totalDiscount").asDouble() > 0)
+                        || e.is(EventTypes.PROMOTION_RELEASED))
+                .map((k, e) -> {
+                    double d = e.payload().path("totalDiscount").asDouble();
+                    boolean applied = e.is(EventTypes.PROMOTION_APPLIED);
+                    return KeyValue.pair("all", new DiscountTotal(applied ? d : -d, applied ? 1 : -1));
+                })
+                .groupByKey(Grouped.with(str, json(DiscountTotal.class)))
+                .aggregate(DiscountTotal::empty, (k, v, agg) -> agg.plus(v),
+                        Materialized.<String, DiscountTotal, KeyValueStore<Bytes, byte[]>>as("promotion-discount-store")
+                                .withKeySerde(str).withValueSerde(json(DiscountTotal.class)))
+                .toStream()
+                .map((k, t) -> metric(new MetricUpdate("promotion_discount", "all", null, null, null,
+                        round(t.amount()), t.orders(), null)))
+                .to(Topics.ANALYTICS_EVENTS, Produced.with(str, str));
+    }
+
+    /** Tổng giảm giá + số đơn (cộng/trừ theo PromotionApplied / PromotionReleased). */
+    public record DiscountTotal(double amount, long orders) {
+        public static DiscountTotal empty() {
+            return new DiscountTotal(0, 0);
+        }
+
+        public DiscountTotal plus(DiscountTotal o) {
+            return new DiscountTotal(amount + o.amount, orders + o.orders);
+        }
     }
 
     // ------------------------------------------------------------------ Doanh thu (kịch bản A)
@@ -288,8 +328,8 @@ public class AnalyticsTopology {
                           KStream<String, EventEnvelope> activity, KStream<String, EventEnvelope> fraud,
                           KStream<String, EventEnvelope> shipping, KStream<String, EventEnvelope> reviews) {
         orders.merge(payments).merge(carts).merge(users).merge(activity).merge(fraud).merge(shipping).merge(reviews)
-                .filter((k, e) -> COUNTERS.containsKey(e.eventType()))
-                .map((k, e) -> KeyValue.pair(COUNTERS.get(e.eventType()), e.eventId()))
+                .filter((k, e) -> counterName(e) != null)
+                .map((k, e) -> KeyValue.pair(counterName(e), e.eventId()))
                 .groupByKey(Grouped.with(str, str))
                 .count(Materialized.<String, Long, KeyValueStore<Bytes, byte[]>>as("counters-store").withKeySerde(str))
                 .toStream()
@@ -340,6 +380,14 @@ public class AnalyticsTopology {
                             Map.of("productId", p.path("productId").asLong())));
                 })
                 .to(Topics.ANALYTICS_EVENTS, Produced.with(str, str));
+    }
+
+    /** Tên bộ đếm cho sự kiện (null = không đếm). Ticket chỉ đếm "đã giải quyết" khi chuyển sang RESOLVED. */
+    private static String counterName(EventEnvelope e) {
+        if (e.is(EventTypes.TICKET_STATUS_CHANGED)) {
+            return "RESOLVED".equals(e.payload().path("status").asText()) ? "tickets_resolved" : null;
+        }
+        return COUNTERS.get(e.eventType());
     }
 
     // ------------------------------------------------------------------ Helpers

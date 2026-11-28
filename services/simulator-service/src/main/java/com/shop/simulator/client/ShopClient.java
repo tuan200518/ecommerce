@@ -55,8 +55,23 @@ public class ShopClient {
         return call(HttpMethod.GET, "/api/products/" + id, null, null);
     }
 
+    /** Xem sản phẩm khi đã đăng nhập → ProductViewed mang userId (hồ sơ sở thích, "khách cũng xem"). */
+    public JsonNode product(String token, long id) {
+        return call(HttpMethod.GET, "/api/products/" + id, null, token);
+    }
+
     public JsonNode availability(long id) {
         return call(HttpMethod.GET, "/api/inventory/availability?productIds=" + id, null, null);
+    }
+
+    /** Gợi ý sản phẩm (token null = khách vãng lai). */
+    public JsonNode recommendations(String token, String path) {
+        return call(HttpMethod.GET, "/api/recommendations/" + path, null, token);
+    }
+
+    public JsonNode recommendationClick(String token, String placement, long productId) {
+        return call(HttpMethod.POST, "/api/recommendations/clicks",
+                Map.of("placement", placement, "productId", productId), token);
     }
 
     public JsonNode addToCart(String token, long productId, int quantity) {
@@ -162,6 +177,29 @@ public class ShopClient {
 
     public JsonNode redeem(String token, String rewardId) {
         return call(HttpMethod.POST, "/api/loyalty/rewards/" + rewardId + "/redeem", Map.of(), token);
+    }
+
+    // ------------------------------------------------------------------ Hỗ trợ khách hàng
+
+    public JsonNode createTicket(String token, String subject, String category, Long orderId, String message) {
+        Map<String, Object> body = new java.util.HashMap<>(Map.of("subject", subject, "category", category,
+                "message", message));
+        if (orderId != null) {
+            body.put("orderId", orderId);
+        }
+        return call(HttpMethod.POST, "/api/support/tickets", body, token);
+    }
+
+    public JsonNode supportQueue(String token, String status) {
+        return call(HttpMethod.GET, "/api/support/admin/tickets?size=20&status=" + status, null, token);
+    }
+
+    public JsonNode replyTicket(String token, long ticketId, String content) {
+        return call(HttpMethod.POST, "/api/support/tickets/" + ticketId + "/messages", Map.of("content", content), token);
+    }
+
+    public JsonNode updateTicket(String token, long ticketId, String status) {
+        return call(HttpMethod.PUT, "/api/support/admin/tickets/" + ticketId, Map.of("status", status), token);
     }
 
     // ------------------------------------------------------------------ HTTP

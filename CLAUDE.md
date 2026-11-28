@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-Event-driven e-commerce platform: 17 Spring Boot 3.5 / Java 21 microservices talking over Apache Kafka (KRaft), Kafka Streams for real-time analytics, PostgreSQL (one database per service), Redis (product cache), and a React 18 + TypeScript + ECharts frontend. Maven multi-module reactor rooted at [pom.xml](pom.xml). Detailed docs (in Vietnamese): [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/API.md](docs/API.md), [docs/TESTING.md](docs/TESTING.md).
+Event-driven e-commerce platform: 19 Spring Boot 3.5 / Java 21 microservices talking over Apache Kafka (KRaft), Kafka Streams for real-time analytics, PostgreSQL (one database per service), Redis (product cache), and a React 18 + TypeScript + ECharts frontend. Maven multi-module reactor rooted at [pom.xml](pom.xml). Detailed docs (in Vietnamese): [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/API.md](docs/API.md), [docs/TESTING.md](docs/TESTING.md).
 
 Code comments, log messages, and user-facing error strings are written in **Vietnamese** — keep new ones consistent.
 
@@ -12,7 +12,8 @@ Code comments, log messages, and user-facing error strings are written in **Viet
 
 ```bash
 # Full stack (frontend :3000, gateway :8080, Kafka UI :8090, Postgres host port 5433,
-#             Grafana :3001 admin/admin, Prometheus 127.0.0.1:9090)
+#             Grafana :3001 admin/admin, Prometheus 127.0.0.1:9090, Alertmanager 127.0.0.1:9093,
+#             Mailpit (alert e-mails) 127.0.0.1:8025)
 docker compose up -d --build
 docker compose down            # add -v to wipe data
 
@@ -44,7 +45,7 @@ docker compose --profile loadtest run --rm k6 run /scripts/simulate-traffic.js
 docker compose --profile loadtest run --rm k6 run -e BUYERS=200 /scripts/flash-sale.js
 ```
 
-Seeded logins: `admin@shop.local / Admin@123`, `customer@shop.local / Customer@123` (others in README).
+Seeded logins: `admin@shop.local / Admin@123`, `customer@shop.local / Customer@123`, `support@shop.local / Support@123` (others in README).
 
 ## Architecture
 
@@ -95,10 +96,23 @@ The order moves to `AWAITING_PAYMENT` (emitting `PaymentRequested` with the disc
 - **Gateway**: `RateLimitFilter` (order -90, after JWT -100; fixed 1-min windows in Redis, fail-open; buckets in `RateLimitPolicy`, limits `RATE_LIMIT_*`). `ClientIp` trusts `X-Real-IP` only from internal addresses and the gateway overwrites `X-Client-Ip` for downstream.
 - **auth-service**: N consecutive bad passwords → temporary lock (423), `shop.auth.max-failed-logins` / `lock-duration`.
 - **Metrics**: `MetricsEnvironmentPostProcessor` tags every metric with `application` and enables latency histograms; custom meters `shop.outbox.pending`, `shop.kafka.dlt`, `shop.gateway.rate.limited`, `shop.auth.logins`, `shop.promotion.*`. Alert rules in `infra/prometheus/alerts.yml`, Grafana dashboard provisioned from `infra/grafana/`.
+### Ecommerce 2.2 (alerting, support)
+- **Alert routing**: Prometheus → Alertmanager ([infra/alertmanager/alertmanager.yml](infra/alertmanager/alertmanager.yml), groups/dedups/inhibits) → webhook `POST /internal/alerts` on notification-service (Bearer `ALERT_WEBHOOK_TOKEN`, must match the inline token in alertmanager.yml; not routed by the gateway). `AlertRelayService` creates an in-app ADMIN notification (directly, not via Kafka) and fans out to `AlertChannels` (Slack/Discord/Telegram/email, each enabled only when its `ALERT_*`/`SMTP_*` env is set; email defaults to Mailpit). Channel failures are recorded, never rethrown. Business alerts reach Alertmanager via the `shop_analytics_alerts_total` counter (incremented only for *recent* alerts, since the dashboard consumer may re-read old analytics-events).
+- **support-service** (8098, Java package `com.shop.helpdesk` — `com.shop.support` belongs to the service-support lib): tickets linked to the customer's own orders (validated against an `order_refs` read-model), SSE chat via `SupportHub` (push after commit, single instance), SLA by priority with one-time breach notification + `shop_support_tickets_overdue` gauge, auto-close of resolved tickets. New role `SUPPORT_AGENT` (in `Roles.ALL`, gateway `STAFF`, frontend `STAFF_ROLES`); `AccountSeeder` creates `support@shop.local` even on existing databases.
+- promotion-service emits `PromotionReleased` on cancel so analytics can show *net* promotion discount.
+- Gateway `UpstreamUnavailableFilter` turns connection-refused/timeouts into 503 problem+json ("đang khởi động") instead of SCG's default 500 — expected for 1–5 min after `docker compose up`.
+- Spring Data does not pick up repository interfaces nested inside a class (`considerNestedRepositories=false`) — keep each repository in its own file.
 - Perl/sed one-liners with `|` or `#` delimiters have repeatedly corrupted files here (those characters appear in Java/TS/YAML) — prefer the Edit tool for multi-line source edits.
 
+### Ecommerce 2.3 (recommendation, fast dashboard)
+- **recommendation-service** (8099, JdbcTemplate + `schema.sql`, no JPA): learns online from product/order/user-activity/cart/review-events (`LearningService`, idempotent, uses the event's `occurredAt` so replaying history from the beginning gives the same model). Tables: `rec_pairs` (item-item co-occurrence, `BOUGHT` from `OrderConfirmed`, `VIEWED` = same user within `co-view-window`), `rec_product_stats`, `rec_daily` (popularity), `rec_interactions` (per-user profile), `rec_placement_stats`/`rec_clicks` (CTR + conversions: an `OrderConfirmed` containing a product the user clicked from a recommendation within `attribution-window`, last-touch). Counters use `INSERT … ON CONFLICT DO NOTHING` + `UPDATE x = x + ?` (concurrency-safe on H2 and PG).
+- `RecommendationService` serves placements `for-you`, `similar`, `bought-together`, `cart`, `trending`; pure scoring in `engine/Scoring` (shrunk cosine, content similarity, half-life decay, Bayesian rating factor, category diversification). Every item carries a Vietnamese `reason`. Catalog/stats/trend are cached `cache-ttl` (tests set `0s`). Gateway: the GET endpoints + `POST /clicks` are public (listed one by one so `/api/recommendations/admin/**` stays role-gated ADMIN/ANALYST/PRODUCT_MANAGER); a valid token still forwards `X-User-*` → personalization.
+- **Kafka retention vs. new services**: product-events older than the broker retention (7 days) are gone, so a new service reading from the beginning would see no catalog. product-service's `CatalogRepublisher` re-publishes every product as `ProductUpdated`/`ProductDiscontinued` on startup and every `CATALOG_REPUBLISH_INTERVAL` (24h); all product-events consumers treat these as idempotent upserts (inventory also re-emits `StockUpdated`).
+- Recommendation writes lock rows in one global order (`rec_daily` → `rec_product_stats` → `rec_pairs`, ascending ids) — without it, orders with the same product pair on different partitions deadlocked in PostgreSQL (H2 tests don't show this).
+- **Dashboard snapshot**: `DashboardSnapshotStore` saves `DashboardState.export()` (state + last applied offset per partition + analytics-events topic id) to `dashboard_snapshot` every 15s and on shutdown; on startup it restores and `AnalyticsEventsConsumer.onPartitionsAssigned` seeks to offset+1 instead of the beginning (partitions without a snapshot, a different topic id or a bad/old-format snapshot → full replay). Bump `DashboardState.FORMAT` when changing `Persisted`. `DASHBOARD_SNAPSHOT_ENABLED=false` restores the old behaviour.
+
 ### Analytics
-`analytics-service` runs a Kafka Streams topology (`streams/AnalyticsTopology.java`: windowed revenue 1m/5m/1h, order spike & payment-failure alerts, status counts, top products, funnel, active users) writing to `analytics-events`. `AnalyticsEventsConsumer` updates in-memory `DashboardState` and upserts aggregate tables (`schema.sql`); `DashboardBroadcaster` pushes SSE throttled to ≤1/s. The dashboard never queries business tables. `KafkaMonitor` reports consumer lag via AdminClient.
+`analytics-service` runs a Kafka Streams topology (`streams/AnalyticsTopology.java`: windowed revenue 1m/5m/1h, order spike & payment-failure alerts, status counts, top products, funnel, active users) writing to `analytics-events`. `AnalyticsEventsConsumer` updates in-memory `DashboardState` (restored from `dashboard_snapshot`, see 2.3) and upserts aggregate tables (`schema.sql`); `DashboardBroadcaster` pushes SSE throttled to ≤1/s. The dashboard never queries business tables. `KafkaMonitor` reports consumer lag via AdminClient.
 
 ### simulator-service
 Not a domain service — an HTTP client (`ShopClient`) that drives realistic traffic through the gateway (virtual customers incl. reviews/Q&A and occasional "suspicious" big orders; staff bots for restocking, shipment processing via `/api/shipments`, and fraud review via `analyst@shop.local`). Controlled at `/admin/simulator` in the UI; disable autostart with `SIMULATOR_AUTOSTART=false`.
@@ -106,9 +120,9 @@ Not a domain service — an HTTP client (`ShopClient`) that drives realistic tra
 ### Persistence & build details
 - Schema is managed by Hibernate `ddl-auto: update` (no Flyway/Liquibase). Consequences: new columns on existing tables must be **nullable** (NOT NULL fails on tables with rows), and Hibernate 6's CHECK constraints on `@Enumerated(STRING)` columns are not updated when enum values are added — see `OrderSchemaPatches` (drops them on startup).
 - Databases are created by the idempotent [infra/postgres/init.sql](infra/postgres/init.sql) (`\gexec`), run both by initdb and by the compose `db-init` job on every `up` (so existing volumes get new DBs). A new service needs an entry there plus a `DB_URL` in docker-compose.
-- All 15 DB services share one PostgreSQL: connection budget is `max_connections=200` (postgres `command` in compose) vs `DB_POOL_SIZE` (default 5, set via `SPRING_DATASOURCE_HIKARI_MAXIMUMPOOLSIZE` in `x-service-env`) × number of services. Exceeding it shows up as `too many clients already` / "Unable to determine Dialect" at startup and 500s from the gateway.
+- All 17 DB services share one PostgreSQL: connection budget is `max_connections=200` (postgres `command` in compose) vs `DB_POOL_SIZE` (default 5, set via `SPRING_DATASOURCE_HIKARI_MAXIMUMPOOLSIZE` in `x-service-env`) × number of services. Exceeding it shows up as `too many clients already` / "Unable to determine Dialect" at startup and 500s from the gateway.
 - Every service POM sets `<finalName>app</finalName>`; the shared [docker/service.Dockerfile](docker/service.Dockerfile) builds the whole reactor once and copies `services/${SERVICE}/target/app.jar`. A new module must be added to the root `pom.xml` `<modules>` and to `docker-compose.yml`.
-- Service ports: gateway 8080 (actuator on internal management port 9080), auth 8081, user 8082, product 8083, cart 8084, order 8085, inventory 8086, payment 8087, notification 8088, analytics 8089, simulator 8091, fraud 8092, loyalty 8093, shipping 8094, review 8095, promotion 8096, audit 8097. A new service also needs a scrape target in [infra/prometheus/prometheus.yml](infra/prometheus/prometheus.yml). A new service also needs a `ServiceUrls` field, a route in `ApiGatewayApplication`, `AccessPolicy` rules (first matching `RoleRule` wins) and the URL env var on the gateway in docker-compose.
+- Service ports: gateway 8080 (actuator on internal management port 9080), auth 8081, user 8082, product 8083, cart 8084, order 8085, inventory 8086, payment 8087, notification 8088, analytics 8089, simulator 8091, fraud 8092, loyalty 8093, shipping 8094, review 8095, promotion 8096, audit 8097, support 8098, recommendation 8099. A new service also needs a scrape target in [infra/prometheus/prometheus.yml](infra/prometheus/prometheus.yml). A new service also needs a `ServiceUrls` field, a route in `ApiGatewayApplication`, `AccessPolicy` rules (first matching `RoleRule` wins) and the URL env var on the gateway in docker-compose.
 
 ### Tests
 - Integration tests use `@EmbeddedKafka(kraft = true)` + H2 in `MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE`, overriding properties in `@SpringBootTest(properties = ...)` (e.g. `shop.kafka.partitions=1`, `shop.outbox.poll-interval-ms=100`) and asserting async outcomes with Awaitility. See `OrderSagaIntegrationTest` as the template.

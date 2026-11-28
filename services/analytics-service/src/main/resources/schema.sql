@@ -34,3 +34,10 @@ CREATE TABLE IF NOT EXISTS analytics_alerts (
     message    VARCHAR(1000),
     created_at TIMESTAMP     NOT NULL
 );
+
+-- Snapshot trạng thái Dashboard + offset đã đọc của analytics-events (khởi động lại không phải đọc lại cả topic)
+CREATE TABLE IF NOT EXISTS dashboard_snapshot (
+    id       VARCHAR(32) PRIMARY KEY,
+    payload  TEXT        NOT NULL,
+    saved_at TIMESTAMP   NOT NULL
+);

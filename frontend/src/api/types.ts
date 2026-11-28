@@ -196,6 +196,11 @@ export interface Kpis {
   flaggedOrders: number;
   shipmentsDelivered: number;
   reviews: number;
+  /** Tổng giảm giá khuyến mãi ròng (đã trừ đơn bị hủy) và số đơn đang hưởng ưu đãi */
+  promotionDiscount?: number;
+  discountedOrders?: number;
+  ticketsCreated?: number;
+  ticketsResolved?: number;
 }
 
 export interface ProductStat {
@@ -540,4 +545,136 @@ export interface AuditSummary {
   byAction: { key: string; count: number }[];
   bySource: { key: string; count: number }[];
   suspiciousIps: { ip: string; failures: number; accounts: number }[];
+}
+
+// ------------------------------------------------------------------ Hỗ trợ khách hàng (Support Service)
+
+export type TicketStatus = 'OPEN' | 'IN_PROGRESS' | 'WAITING_CUSTOMER' | 'RESOLVED' | 'CLOSED';
+
+export interface Ticket {
+  id: number;
+  code: string;
+  userId: number;
+  customerEmail: string;
+  subject: string;
+  category: string;
+  orderId?: number | null;
+  status: TicketStatus;
+  priority: 'LOW' | 'NORMAL' | 'HIGH' | 'URGENT';
+  assigneeEmail?: string | null;
+  firstResponseDueAt: string;
+  firstResponseAt?: string | null;
+  overdue: boolean;
+  resolvedAt?: string | null;
+  closedAt?: string | null;
+  lastMessageAt: string;
+  unread: number;
+  rating?: number | null;
+  ratingComment?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TicketMessage {
+  id: number;
+  ticketId: number;
+  authorName: string;
+  kind: 'CUSTOMER' | 'STAFF' | 'SYSTEM';
+  content: string;
+  createdAt: string;
+}
+
+export interface TicketOrderInfo {
+  orderId: number;
+  status: string;
+  totalAmount?: number | null;
+}
+
+export interface TicketDetail {
+  ticket: Ticket;
+  messages: TicketMessage[];
+  order?: TicketOrderInfo | null;
+}
+
+export interface SupportSummary {
+  byStatus: Record<string, number>;
+  active: number;
+  unassigned: number;
+  overdue: number;
+  resolvedToday: number;
+  avgFirstResponseMinutes?: number | null;
+  avgRating?: number | null;
+  ratingCount: number;
+}
+
+// ------------------------------------------------------------------ Cảnh báo hệ thống (Alertmanager → notification-service)
+
+export interface AlertEvent {
+  id: number;
+  alertName: string;
+  status: 'firing' | 'resolved';
+  severity?: string | null;
+  target?: string | null;
+  title: string;
+  message?: string | null;
+  startsAt?: string | null;
+  receivedAt: string;
+  deliveries?: string | null;
+}
+
+// ------------------------------------------------------------------ Gợi ý sản phẩm (recommendation-service)
+
+export type RecommendationPlacement = 'for-you' | 'similar' | 'bought-together' | 'cart' | 'trending';
+
+export interface RecommendedProduct {
+  productId: number;
+  name: string;
+  price?: number | null;
+  imageUrl?: string | null;
+  categoryId?: number | null;
+  categoryName?: string | null;
+  score: number;
+  reason: string;
+}
+
+export interface RecommendationList {
+  placement: RecommendationPlacement;
+  strategy: 'HYBRID' | 'CO_PURCHASE' | 'PERSONALIZED' | 'TRENDING';
+  items: RecommendedProduct[];
+}
+
+export interface RecommendationPlacementStats {
+  placement: RecommendationPlacement;
+  label: string;
+  requests: number;
+  impressions: number;
+  clicks: number;
+  ctr: number;
+  conversions: number;
+  conversionRate: number;
+  revenue: number;
+}
+
+export interface RecommendationAdminStats {
+  days: number;
+  placements: RecommendationPlacementStats[];
+  daily: { day: string; impressions: number; clicks: number; conversions: number }[];
+  model: {
+    products: number;
+    activeProducts: number;
+    boughtPairs: number;
+    viewedPairs: number;
+    interactions: number;
+    profiles: number;
+    lastLearnedAt?: string | null;
+  };
+  topPairs: { productId: number; productName: string; relatedId: number; relatedName: string; orders: number }[];
+}
+
+export interface RecommendationUserProfile {
+  userId: number;
+  seeds: { productId: number; name: string; kind: string; weight: number }[];
+  categories: { categoryId: number; categoryName: string; weight: number }[];
+  searches: string[];
+  forYou: RecommendationList;
 }

@@ -93,6 +93,10 @@ Khuyến mãi (2.1): `voucherCode`, `itemDiscount` (flash sale), `voucherDiscoun
 | GET | `/api/notifications?page=` | Thông báo của tôi + thông báo theo vai trò |
 | GET | `/api/notifications/unread-count` | `{count}` |
 | POST | `/api/notifications/{id}/read`, `/api/notifications/read-all` | Đánh dấu đã đọc |
+| GET | `/api/notifications/admin/alerts?page=` | **ADMIN** – lịch sử cảnh báo hệ thống nhận từ Alertmanager + kết quả gửi từng kênh |
+| GET | `/api/notifications/admin/alerts/channels` | **ADMIN** – kênh đang bật (`in-app`, `slack`, `discord`, `telegram`, `email`; không lộ URL/token) |
+| POST | `/api/notifications/admin/alerts/test` | **ADMIN** – gửi cảnh báo thử qua mọi kênh đang bật |
+| POST | `/internal/alerts` | Webhook cho Alertmanager (Bearer `ALERT_WEBHOOK_TOKEN`); **không** có route qua Gateway |
 
 ## Analytics – `analytics-service` (nhân viên)
 
@@ -174,9 +178,43 @@ Dữ liệu mẫu (khi CSDL trống, `PROMOTION_SEED=true`): mã `WELCOME10` (10
 
 Bản ghi: `{occurredAt, source, correlationId, actorId, actorEmail, actorRoles, action, resourceType, resourceId, outcome: SUCCESS|FAILURE, detail, clientIp}`. Thao tác được ghi: đăng nhập (sai/bị chặn/khóa; thành công của nhân viên), đổi vai trò, khóa tài khoản, sản phẩm & danh mục, nhập kho & ngưỡng tồn, nhân viên hủy đơn, duyệt/từ chối đơn rủi ro, cập nhật vận đơn, ẩn/hiện đánh giá, flash sale & voucher.
 
+## Support – `support-service`
+
+| Method | Path | Quyền | Mô tả |
+|---|---|---|---|
+| POST | `/api/support/tickets` | khách hàng | `{subject, category: ORDER\|PAYMENT\|SHIPPING\|PRODUCT\|PROMOTION\|ACCOUNT\|OTHER, orderId?, message}` → **201** `{ticket, messages, order}`; `orderId` phải là đơn của chính khách; tối đa 5 yêu cầu đang mở (409) |
+| GET | `/api/support/tickets/mine?page=` | đăng nhập | Yêu cầu của tôi (`unread` = tin chưa đọc) |
+| GET | `/api/support/orders/mine` | đăng nhập | Đơn gần đây để chọn khi tạo yêu cầu |
+| GET | `/api/support/tickets/{id}` | chủ yêu cầu / CSKH / ADMIN / ANALYST | Chi tiết + tin nhắn + ngữ cảnh đơn; đánh dấu đã đọc. Người khác → 404 |
+| POST | `/api/support/tickets/{id}/messages` | chủ yêu cầu / ADMIN, SUPPORT_AGENT | `{content}` (≤ 2000 ký tự). Khách trả lời yêu cầu đã giải quyết → mở lại; yêu cầu đã đóng → 409 |
+| POST | `/api/support/tickets/{id}/close` | chủ yêu cầu | Khách tự đóng |
+| POST | `/api/support/tickets/{id}/rating` | chủ yêu cầu | `{rating 1–5, comment}` – sau khi đã giải quyết, một lần |
+| GET | `/api/support/tickets/{id}/stream` | như xem chi tiết | **SSE**: event `message` (tin nhắn mới), `ticket` (trạng thái mới) |
+| GET | `/api/support/admin/tickets?status=ACTIVE\|OPEN\|…&priority=&assignee=ME\|NONE&overdue=true&q=&page=` | ADMIN, SUPPORT_AGENT, ANALYST | Hàng đợi, sắp theo ưu tiên (Khẩn → Thấp) rồi tin nhắn mới nhất; `q` tìm `HT-<id>`, số đơn, email, tiêu đề |
+| PUT | `/api/support/admin/tickets/{id}` | ADMIN, SUPPORT_AGENT | `{status?: IN_PROGRESS\|WAITING_CUSTOMER\|RESOLVED\|CLOSED, priority?, assignee?: ME\|NONE, note?}` – ghi tin nhắn hệ thống + audit |
+| GET | `/api/support/admin/summary` | ADMIN, SUPPORT_AGENT, ANALYST | Số yêu cầu theo trạng thái, chưa nhận, quá hạn SLA, giải quyết hôm nay, thời gian phản hồi đầu tiên TB, điểm hài lòng TB |
+| GET | `/api/support/admin/stream` | ADMIN, SUPPORT_AGENT, ANALYST | **SSE** hàng đợi: event `ticket` khi có yêu cầu mới / cập nhật |
+
+SLA phản hồi đầu tiên: Khẩn 15 phút · Cao 30 phút (mặc định cho chủ đề thanh toán hoặc đơn ≥ 10 triệu) · Thường 2 giờ (`SUPPORT_SLA_NORMAL`) · Thấp 8 giờ. Yêu cầu đã giải quyết tự đóng sau 3 ngày không phản hồi. Tài khoản CSKH mẫu: `support@shop.local / Support@123` (vai trò mới `SUPPORT_AGENT`).
+
+## Recommendation – `recommendation-service`
+
+Mọi API gợi ý là **công khai**; gửi kèm token thì nhận gợi ý cá nhân hóa. Kết quả: `{placement, strategy: HYBRID|CO_PURCHASE|PERSONALIZED|TRENDING, items: [{productId, name, price, imageUrl, categoryId, categoryName, score, reason}]}` – `reason` là lý do hiển thị cho khách ("Vì bạn đã xem …", "Thường được mua cùng · 12 đơn"...). `limit` tối đa 24.
+
+| Method | Path | Quyền | Mô tả |
+|---|---|---|---|
+| GET | `/api/recommendations/for-you?limit=12` | công khai | "Dành cho bạn": hồ sơ sở thích (xem/giỏ/mua, danh mục, từ khóa đã tìm) → láng giềng item-item + thịnh hành theo danh mục, đa dạng hóa. Khách vãng lai / khách mới → `TRENDING` |
+| GET | `/api/recommendations/products/{id}/similar?limit=8` | công khai | "Sản phẩm tương tự": khách cũng xem 45% + mua cùng 25% + nội dung (danh mục, giá, tên) 30%; sản phẩm mới chưa có hành vi vẫn có gợi ý |
+| GET | `/api/recommendations/products/{id}/bought-together?limit=4` | công khai | "Thường được mua cùng" (đơn đã thanh toán); rỗng nếu chưa có dữ liệu |
+| GET | `/api/recommendations/cart?productIds=1,2&limit=6` | công khai | "Có thể bạn cũng cần" cho giỏ hàng, bổ sung bằng sản phẩm thịnh hành |
+| GET | `/api/recommendations/trending?limit=12&categoryId=` | công khai | Xem + 3×giỏ + 5×mua theo ngày, chu kỳ bán rã 2 ngày, 7 ngày gần nhất |
+| POST | `/api/recommendations/clicks` | công khai | `{placement, productId}` → **202**. Đo CTR; khách đã đăng nhập mua sản phẩm đã bấm trong 24 giờ → tính chuyển đổi cho vị trí đó |
+| GET | `/api/recommendations/admin/stats?days=7` | ADMIN, ANALYST, PRODUCT_MANAGER | Theo vị trí: lượt gọi, hiển thị, bấm, CTR, đơn, tỷ lệ chuyển đổi, doanh thu; theo ngày; tình trạng mô hình; top cặp mua cùng |
+| GET | `/api/recommendations/admin/users/{userId}?limit=12` | ADMIN, ANALYST, PRODUCT_MANAGER | Giải thích: sản phẩm đã tương tác (trọng số), danh mục quan tâm, từ khóa đã tìm + danh sách "Dành cho bạn" của khách (không tính vào thống kê) |
+
 ## Giám sát
 
-Không đi qua Gateway. Mỗi service mở `/actuator/prometheus` trên cổng nội bộ (Gateway: cổng quản trị 9080, không publish). Prometheus `http://localhost:9090` (chỉ localhost), Grafana `http://localhost:3001` (admin / `GRAFANA_PASSWORD`, dashboard "Shop Platform – Tổng quan hệ thống").
+Không đi qua Gateway. Mỗi service mở `/actuator/prometheus` trên cổng nội bộ (Gateway: cổng quản trị 9080, không publish). Prometheus `http://localhost:9090` (chỉ localhost), Grafana `http://localhost:3001` (admin / `GRAFANA_PASSWORD`, dashboard "Shop Platform – Tổng quan hệ thống"), Alertmanager `http://localhost:9093`, hộp thư Mailpit (email cảnh báo) `http://localhost:8025` – ba địa chỉ sau chỉ mở trên localhost.
 
 ## Review – `review-service`
 

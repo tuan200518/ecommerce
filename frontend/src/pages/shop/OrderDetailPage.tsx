@@ -112,6 +112,7 @@ export default function OrderDetailPage() {
           <p className="small"><strong>Giao đến:</strong> {order.shippingAddress}</p>
           <p className="small"><strong>Thanh toán:</strong> {PAYMENT_METHOD_LABEL[order.paymentMethod] ?? order.paymentMethod}</p>
           {canCancel && <button className="btn btn-danger" onClick={cancel}>Hủy đơn</button>}
+          <Link to={`/support?orderId=${order.id}`} className="btn btn-ghost">💬 Cần hỗ trợ về đơn này?</Link>
         </div>
         <div>
           {shipment && (

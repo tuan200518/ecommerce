@@ -3,13 +3,14 @@
 groups:
   - name: shop-availability
     rules:
+      # for: 3m – khi docker compose up, 18 JVM cần 1–2,5 phút mới sẵn sàng; tránh báo động giả mỗi lần khởi động
       - alert: ServiceDown
         expr: up{job="shop-services"} == 0
-        for: 1m
+        for: 3m
         labels: { severity: critical }
         annotations:
           summary: "Service {{ $labels.service }} không phản hồi"
-          description: "Prometheus không scrape được {{ $labels.instance }} trong hơn 1 phút."
+          description: "Prometheus không scrape được {{ $labels.instance }} trong hơn 3 phút."
 
       - alert: HighErrorRate
         expr: |
@@ -81,9 +82,41 @@ groups:
           summary: "Hơn 30 lần đăng nhập thất bại mỗi phút"
           description: "Có thể đang bị dò mật khẩu – xem Nhật ký kiểm toán (/admin/audit)."
 
+      - alert: AlertDeliveryFailing
+        expr: sum by (channel) (increase(shop_alerting_deliveries_total{result="error"}[15m])) > 0
+        labels: { severity: warning }
+        annotations:
+          summary: "Không gửi được cảnh báo qua kênh {{ $labels.channel }}"
+          description: "Kiểm tra cấu hình ALERT_* / SMTP_* của notification-service (xem trang Lịch sử cảnh báo)."
+
       - alert: RateLimitTriggered
         expr: sum by (rule) (rate(shop_gateway_rate_limited_total[5m])) * 60 > 10
         for: 5m
         labels: { severity: info }
         annotations:
           summary: "Gateway chặn hơn 10 request/phút ở nhóm {{ $labels.rule }}"
+
+  - name: shop-business
+    rules:
+      # Cảnh báo nghiệp vụ từ Kafka Streams (đơn tăng đột biến, thanh toán lỗi, tồn kho thấp, đơn nghi gian lận)
+      - alert: BusinessAlert
+        expr: sum by (type, severity) (increase(shop_analytics_alerts_total[5m])) > 0
+        labels: { source: analytics }
+        annotations:
+          summary: "Cảnh báo nghiệp vụ {{ $labels.type }}"
+          description: "{{ $value | printf \"%.0f\" }} cảnh báo {{ $labels.type }} trong 5 phút – xem chi tiết trên Dashboard (/admin)."
+
+      - alert: SupportTicketsOverdue
+        expr: max(shop_support_tickets_overdue) > 0
+        for: 5m
+        labels: { severity: warning, service: support-service }
+        annotations:
+          summary: "{{ $value }} yêu cầu hỗ trợ quá hạn phản hồi (SLA)"
+          description: "Có yêu cầu của khách chưa được phản hồi lần đầu đúng hạn – xem /admin/support."
+
+      - alert: SupportBacklogHigh
+        expr: max(shop_support_tickets_unassigned) > 20
+        for: 10m
+        labels: { severity: warning, service: support-service }
+        annotations:
+          summary: "{{ $value }} yêu cầu hỗ trợ chưa có người nhận"

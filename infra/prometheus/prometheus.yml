@@ -7,6 +7,12 @@ global:
 rule_files:
   - /etc/prometheus/alerts.yml
 
+# Cảnh báo đang bật được gửi tới Alertmanager (gom nhóm, chống lặp) → notification-service → email/chat
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
 scrape_configs:
   - job_name: shop-services
     metrics_path: /actuator/prometheus
@@ -46,3 +52,7 @@ scrape_configs:
         labels: { service: promotion-service }
       - targets: ["audit-service:8097"]
         labels: { service: audit-service }
+      - targets: ["support-service:8098"]
+        labels: { service: support-service }
+      - targets: ["recommendation-service:8099"]
+        labels: { service: recommendation-service }

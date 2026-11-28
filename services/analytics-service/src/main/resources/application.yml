@@ -37,6 +37,10 @@ shop:
     payment-failure-threshold-per-minute: ${PAYMENT_FAILURE_THRESHOLD:5}
     broadcast-interval-ms: 1000
     kafka-monitor-interval-ms: 5000
+    snapshot:
+      # Lưu trạng thái Dashboard xuống CSDL để khởi động lại không phải đọc lại toàn bộ analytics-events
+      enabled: ${DASHBOARD_SNAPSHOT_ENABLED:true}
+      interval-ms: ${DASHBOARD_SNAPSHOT_INTERVAL_MS:15000}
 
 management:
   endpoints:

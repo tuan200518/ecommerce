@@ -43,6 +43,7 @@ export const ROLE_LABEL: Record<string, string> = {
   PRODUCT_MANAGER: 'QL sản phẩm',
   WAREHOUSE_MANAGER: 'QL kho',
   ANALYST: 'Phân tích',
+  SUPPORT_AGENT: 'CSKH',
 };
 
 export const SHIPMENT_STATUS_LABEL: Record<string, string> = {
@@ -121,4 +122,36 @@ export const AUDIT_ACTION_LABEL: Record<string, string> = {
   VOUCHER_CREATED: 'Tạo voucher',
   VOUCHER_ENABLED: 'Bật voucher',
   VOUCHER_DISABLED: 'Tắt voucher',
+  SUPPORT_TICKET_UPDATED: 'Cập nhật yêu cầu hỗ trợ',
+};
+
+export const TICKET_STATUS_LABEL: Record<string, string> = {
+  OPEN: 'Chờ xử lý',
+  IN_PROGRESS: 'Đang xử lý',
+  WAITING_CUSTOMER: 'Chờ bạn phản hồi',
+  RESOLVED: 'Đã giải quyết',
+  CLOSED: 'Đã đóng',
+};
+
+/** Nhãn trạng thái phía nhân viên (WAITING_CUSTOMER = chờ khách). */
+export const TICKET_STATUS_STAFF_LABEL: Record<string, string> = {
+  ...TICKET_STATUS_LABEL,
+  WAITING_CUSTOMER: 'Chờ khách phản hồi',
+};
+
+export const TICKET_CATEGORY_LABEL: Record<string, string> = {
+  ORDER: 'Đơn hàng',
+  PAYMENT: 'Thanh toán / hoàn tiền',
+  SHIPPING: 'Giao hàng',
+  PRODUCT: 'Sản phẩm / bảo hành',
+  PROMOTION: 'Khuyến mãi / voucher',
+  ACCOUNT: 'Tài khoản',
+  OTHER: 'Khác',
+};
+
+export const TICKET_PRIORITY_LABEL: Record<string, string> = {
+  LOW: 'Thấp',
+  NORMAL: 'Thường',
+  HIGH: 'Cao',
+  URGENT: 'Khẩn',
 };

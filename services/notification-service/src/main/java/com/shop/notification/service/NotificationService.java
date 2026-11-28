@@ -43,8 +43,21 @@ public class NotificationService {
         if (!guard.firstTime(env, CONSUMER)) {
             return;
         }
-        Notification n = repository.save(new Notification(req.userId(), req.targetRole(), req.type(), req.title(),
-                req.message(), req.referenceId()));
+        save(req);
+    }
+
+    /**
+     * Thông báo trong ứng dụng cho mọi người thuộc một vai trò, không đi qua Kafka – dùng cho cảnh báo hệ thống
+     * từ Alertmanager (lúc Kafka gặp sự cố, cảnh báo vẫn phải đến được quản trị viên).
+     */
+    @Transactional
+    public NotificationDto notifyRole(String role, String type, String title, String message, String referenceId) {
+        return save(new NotificationRequested(null, role, type, title, message, referenceId));
+    }
+
+    private NotificationDto save(NotificationRequested req) {
+        Notification n = repository.save(new Notification(req.userId(), req.targetRole(), req.type(),
+                truncate(req.title(), 255), truncate(req.message(), 1000), req.referenceId()));
         NotificationDto dto = NotificationDto.from(n);
         // Chỉ đẩy realtime sau khi commit thành công → không gửi thông báo "ma" nếu transaction rollback
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
@@ -61,5 +74,10 @@ public class NotificationService {
                 }
             }
         });
+        return dto;
+    }
+
+    private static String truncate(String s, int max) {
+        return s == null || s.length() <= max ? s : s.substring(0, max - 1) + "…";
     }
 }

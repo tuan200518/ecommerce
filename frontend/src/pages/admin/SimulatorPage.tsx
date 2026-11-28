@@ -20,6 +20,9 @@ interface Settings {
   autoRiskReview: boolean;
   voucherRate: number;
   flashSaleRate: number;
+  supportRate: number;
+  recommendationRate: number;
+  autoSupport: boolean;
 }
 
 interface Entry {
@@ -60,6 +63,9 @@ const KIND: Record<string, { icon: string; label: string }> = {
   FLASH_SALE: { icon: '⚡', label: 'Săn flash sale' },
   VOUCHER: { icon: '🎟️', label: 'Dùng mã giảm giá' },
   REDEEM: { icon: '🎁', label: 'Đổi điểm' },
+  SUPPORT: { icon: '💬', label: 'Yêu cầu hỗ trợ' },
+  SUPPORT_REPLY: { icon: '🎧', label: 'CSKH trả lời' },
+  RECOMMENDATION: { icon: '🧠', label: 'Bấm gợi ý' },
   ERROR: { icon: '⚠️', label: 'Lỗi' },
 };
 
@@ -73,6 +79,8 @@ const RATES: { key: keyof Settings; label: string; hint: string }[] = [
   { key: 'reviewRate', label: 'Quay lại đánh giá / hỏi đáp', hint: 'đánh giá sản phẩm đã nhận' },
   { key: 'voucherRate', label: 'Dùng mã giảm giá', hint: 'thử mã công khai, chỉ dùng khi báo giá hợp lệ' },
   { key: 'flashSaleRate', label: 'Săn flash sale', hint: 'thêm sản phẩm đang flash sale (giới hạn mỗi khách)' },
+  { key: 'supportRate', label: 'Gửi yêu cầu hỗ trợ', hint: 'khách hỏi CSKH về một đơn đã đặt' },
+  { key: 'recommendationRate', label: 'Bấm vào gợi ý', hint: 'khách chọn sản phẩm từ "Dành cho bạn" / "Tương tự"' },
 ];
 
 export default function SimulatorPage() {
@@ -145,6 +153,8 @@ export default function SimulatorPage() {
         <Stat label="Đáng ngờ / đã xác minh" value={`${number(s.SUSPICIOUS)} / ${number(s.RISK_REVIEW)}`} />
         <Stat label="Đánh giá / câu hỏi" value={`${number(s.REVIEW)} / ${number(s.QUESTION)}`} />
         <Stat label="Flash sale / mã / đổi điểm" value={`${number(s.FLASH_SALE)} / ${number(s.VOUCHER)} / ${number(s.REDEEM)}`} />
+        <Stat label="Yêu cầu hỗ trợ / CSKH trả lời" value={`${number(s.SUPPORT)} / ${number(s.SUPPORT_REPLY)}`} />
+        <Stat label="Bấm vào gợi ý" value={number(s.RECOMMENDATION)} />
         <Stat label="Lỗi" value={number(s.ERROR)} bad={(s.ERROR ?? 0) > 0} />
       </div>
 
@@ -176,6 +186,8 @@ export default function SimulatorPage() {
               Nhân viên vận chuyển ảo xử lý vận đơn (đóng gói → bàn giao → đang giao → đã giao)</label>
             <label className="radio"><input type="checkbox" checked={draft.autoRiskReview} onChange={(e) => setDraft({ ...draft, autoRiskReview: e.target.checked })} />
               Nhân viên xác minh ảo xử lý đơn bị gắn cờ rủi ro (sau ~45 giây)</label>
+            <label className="radio"><input type="checkbox" checked={draft.autoSupport} onChange={(e) => setDraft({ ...draft, autoSupport: e.target.checked })} />
+              Nhân viên CSKH ảo trả lời yêu cầu hỗ trợ (sau ~20 giây)</label>
             <div className="row">
               <button className="btn btn-primary" onClick={save}>Áp dụng</button>
               <button className="btn btn-ghost" onClick={() => setDraft(status.settings)}>Hoàn tác</button>

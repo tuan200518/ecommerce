@@ -39,6 +39,8 @@ shop:
     review: ${REVIEW_SERVICE_URL:http://localhost:8095}
     promotion: ${PROMOTION_SERVICE_URL:http://localhost:8096}
     audit: ${AUDIT_SERVICE_URL:http://localhost:8097}
+    support: ${SUPPORT_SERVICE_URL:http://localhost:8098}
+    recommendation: ${RECOMMENDATION_SERVICE_URL:http://localhost:8099}
 
 # Actuator chạy ở cổng quản trị RIÊNG (không publish ra host): trước đây /actuator/metrics, /actuator/gateway
 # nằm trên cổng 8080 công khai và không đi qua bộ lọc JWT. Prometheus scrape cổng này trong mạng Docker.

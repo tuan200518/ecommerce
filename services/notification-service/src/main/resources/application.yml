@@ -22,6 +22,29 @@ spring:
   mvc:
     async:
       request-timeout: -1
+  # SMTP cho kênh email cảnh báo (mặc định Mailpit trong docker-compose; để trống SMTP_HOST → tắt kênh email)
+  mail:
+    host: ${SMTP_HOST:}
+    port: ${SMTP_PORT:1025}
+    username: ${SMTP_USERNAME:}
+    password: ${SMTP_PASSWORD:}
+    properties:
+      mail.smtp.auth: ${SMTP_AUTH:false}
+      mail.smtp.starttls.enable: ${SMTP_STARTTLS:false}
+      mail.smtp.connectiontimeout: 5000
+      mail.smtp.timeout: 10000
+
+# Chuyển tiếp cảnh báo của Alertmanager (POST /internal/alerts). Kênh nào có cấu hình thì được bật.
+shop:
+  alerting:
+    webhook-token: ${ALERT_WEBHOOK_TOKEN:change-me-alert-webhook-token}
+    slack-webhook-url: ${ALERT_SLACK_WEBHOOK_URL:}
+    discord-webhook-url: ${ALERT_DISCORD_WEBHOOK_URL:}
+    telegram-bot-token: ${ALERT_TELEGRAM_BOT_TOKEN:}
+    telegram-chat-id: ${ALERT_TELEGRAM_CHAT_ID:}
+    email-to: ${ALERT_EMAIL_TO:}
+    email-from: ${ALERT_EMAIL_FROM:alerts@shop.local}
+    dashboard-url: ${ALERT_DASHBOARD_URL:http://localhost:3001}
 
 management:
   endpoints:

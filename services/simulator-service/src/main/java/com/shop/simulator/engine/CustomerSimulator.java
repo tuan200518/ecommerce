@@ -114,6 +114,7 @@ public class CustomerSimulator implements ApplicationRunner {
         bots.add(scheduler.scheduleWithFixedDelay(this::safeRestock, 10, 20, TimeUnit.SECONDS));
         bots.add(scheduler.scheduleWithFixedDelay(this::safeFulfill, 10, 10, TimeUnit.SECONDS));
         bots.add(scheduler.scheduleWithFixedDelay(this::safeRiskReview, 15, 15, TimeUnit.SECONDS));
+        bots.add(scheduler.scheduleWithFixedDelay(this::safeSupport, 20, 20, TimeUnit.SECONDS));
         log.info("Bắt đầu mô phỏng khách hàng ảo: {}", settings);
     }
 
@@ -236,6 +237,10 @@ public class CustomerSimulator implements ApplicationRunner {
             return;
         }
         VirtualCustomer c = chooseCustomer(s);
+        if (!forceOrder && chance(s.supportRate())) {
+            supportSession(c);
+            return;
+        }
         if (!forceOrder && chance(s.reviewRate())) {
             afterSalesSession(c);
             return;
@@ -249,22 +254,44 @@ public class CustomerSimulator implements ApplicationRunner {
         }
         think(300, 1200);
 
-        // 2. Xem chi tiết vài sản phẩm
+        // 2. Xem chi tiết vài sản phẩm – kèm khối gợi ý "Dành cho bạn" (trang chủ) và "Sản phẩm tương tự"
+        RecommendedPick pick = chance(0.6) ? browseRecommendations(c, s, "for-you?limit=8") : null;
         int views = 1 + rnd().nextInt(3);
         for (int i = 0; i < views; i++) {
             Catalog.Item item = chance(0.7) ? catalog.pickPopular() : catalog.pickAny();
-            client.product(item.id());
+            withAuth(c, t -> client.product(t, item.id()));
             client.availability(item.id());
+            if (pick == null && chance(0.5)) {
+                pick = browseRecommendations(c, s, "products/" + item.id() + "/similar?limit=8");
+            }
             think(400, 1500);
+        }
+        if (pick != null) {
+            long picked = pick.productId();
+            withAuth(c, t -> client.product(t, picked));
+            client.availability(pick.productId());
+            think(400, 1200);
         }
         if (!forceOrder && chance(s.browseOnlyRate())) {
             activity.record(Kind.BROWSE_ONLY, c.name(), "xem " + views + " sản phẩm rồi rời đi");
             return;
         }
 
-        // 3. Thêm vào giỏ
+        // 3. Thêm vào giỏ (sản phẩm vừa bấm từ gợi ý thường được chọn trước)
         int lines = c.persona().lines();
         int added = 0;
+        if (pick != null && chance(0.7)) {
+            long productId = pick.productId();
+            try {
+                withAuth(c, t -> client.addToCart(t, productId, 1));
+                added++;
+                lines--;
+            } catch (ShopApiException e) {
+                if (e.status() != 400) {
+                    throw e;
+                }
+            }
+        }
         for (int i = 0; i < lines; i++) {
             Catalog.Item item = catalog.pickPopular();
             int qty = c.persona().quantity();
@@ -442,6 +469,81 @@ public class CustomerSimulator implements ApplicationRunner {
                 } catch (ShopApiException e) {
                     // vận đơn vừa bị hủy / trạng thái đã đổi → bỏ qua
                 }
+            }
+        }
+    }
+
+    /** Khách gửi yêu cầu hỗ trợ về một đơn gần đây (hoặc câu hỏi chung nếu chưa có đơn). */
+    private record RecommendedPick(long productId, String name, String placement) {
+    }
+
+    /**
+     * Xem một khối gợi ý; với xác suất recommendationRate khách bấm vào một trong 4 sản phẩm đầu
+     * (Recommendation Service đo CTR và quy đơn hàng về gợi ý). Lỗi gợi ý không làm hỏng phiên mua sắm.
+     */
+    private RecommendedPick browseRecommendations(VirtualCustomer c, SimulatorSettings s, String path) {
+        try {
+            JsonNode list = withAuth(c, t -> client.recommendations(t, path));
+            JsonNode items = list.path("items");
+            if (items.isEmpty() || !chance(s.recommendationRate())) {
+                return null;
+            }
+            JsonNode item = items.get(rnd().nextInt(Math.min(4, items.size())));
+            String placement = list.path("placement").asText();
+            long productId = item.path("productId").asLong();
+            withAuth(c, t -> client.recommendationClick(t, placement, productId));
+            activity.record(Kind.RECOMMENDATION, c.name(), "bấm gợi ý \"" + item.path("name").asText() + "\" – "
+                    + item.path("reason").asText());
+            return new RecommendedPick(productId, item.path("name").asText(), placement);
+        } catch (ShopApiException e) {
+            log.debug("Không lấy được gợi ý {}: {}", path, e.getMessage());
+            return null;
+        }
+    }
+
+    private void supportSession(VirtualCustomer c) {
+        JsonNode orders = withAuth(c, client::myOrders).path("content");
+        Long orderId = orders.isEmpty() ? null : orders.get(rnd().nextInt(orders.size())).path("id").asLong();
+        String[] req = RandomData.supportRequest();
+        try {
+            JsonNode t = withAuth(c, tok -> client.createTicket(tok, req[1], req[0], orderId, req[2]));
+            activity.record(Kind.SUPPORT, c.name(), "gửi yêu cầu " + t.path("ticket").path("code").asText()
+                    + " \"" + req[1] + "\"" + (orderId == null ? "" : " về đơn #" + orderId));
+        } catch (ShopApiException e) {
+            if (e.status() != 409) { // 409 = đang có quá nhiều yêu cầu mở → bỏ qua
+                throw e;
+            }
+        }
+    }
+
+    private void safeSupport() {
+        try {
+            if (running && settings.autoSupport()) {
+                supportBot();
+            }
+        } catch (Exception e) {
+            activity.record(Kind.ERROR, "CSKH ảo", e.getMessage());
+        }
+    }
+
+    /** Nhân viên CSKH ảo: trả lời yêu cầu chờ xử lý (sau ~20 giây), rồi đánh dấu đã giải quyết. */
+    private void supportBot() {
+        VirtualCustomer agent = new VirtualCustomer(props.supportEmail(), props.supportPassword(), "support",
+                VirtualCustomer.Persona.REGULAR);
+        Instant cutoff = Instant.now().minusSeconds(20);
+        for (JsonNode t : withAuth(agent, tok -> client.supportQueue(tok, "OPEN")).path("content")) {
+            if (!Instant.parse(t.path("lastMessageAt").asText()).isBefore(cutoff)) {
+                continue;
+            }
+            long id = t.path("id").asLong();
+            try {
+                withAuth(agent, tok -> client.replyTicket(tok, id, RandomData.agentReply()));
+                boolean resolve = chance(0.7);
+                withAuth(agent, tok -> client.updateTicket(tok, id, resolve ? "RESOLVED" : "WAITING_CUSTOMER"));
+                activity.record(Kind.SUPPORT_REPLY, "CSKH ảo", "trả lời " + t.path("code").asText()
+                        + (resolve ? " và đánh dấu đã giải quyết" : ", chờ khách phản hồi"));
+            } catch (ShopApiException e) {
+                // yêu cầu vừa bị khách đóng / người thật xử lý → bỏ qua
             }
         }
     }

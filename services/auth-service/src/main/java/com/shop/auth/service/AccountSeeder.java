@@ -32,7 +32,11 @@ public class AccountSeeder implements ApplicationRunner {
 
     @Override
     public void run(ApplicationArguments args) {
-        if (users.count() > 0) {
+        // Tài khoản CSKH (phiên bản 2.2) – tạo cả trên CSDL đã có dữ liệu từ phiên bản trước
+        if (!users.existsByEmailIgnoreCase("support@shop.local")) {
+            auth.createUser("support@shop.local", "Support@123", "Nhân viên CSKH", Set.of(Roles.SUPPORT_AGENT));
+        }
+        if (users.count() > 1) {
             return;
         }
         auth.createUser("admin@shop.local", "Admin@123", "Quản trị viên", Set.of(Roles.ADMIN));

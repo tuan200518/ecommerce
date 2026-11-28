@@ -20,8 +20,8 @@ x-service-env: &service-env
   DB_PASSWORD: ${POSTGRES_PASSWORD:-shop}
   JWT_SECRET: ${JWT_SECRET:-change-me-please-this-is-a-dev-only-secret-0123456789}
   JAVA_OPTS: ${JAVA_OPTS:--Xms64m -Xmx320m -XX:+UseSerialGC}
-  # 15 service dùng DB × pool mặc định 10 vượt max_connections của PostgreSQL → "too many clients already".
-  # Mỗi service chỉ cần vài kết nối; tổng 15 × 5 = 75 (max_connections=200).
+  # 17 service dùng DB × pool mặc định 10 vượt max_connections của PostgreSQL → "too many clients already".
+  # Mỗi service chỉ cần vài kết nối; tổng 17 × 5 = 85 (max_connections=200).
   SPRING_DATASOURCE_HIKARI_MAXIMUMPOOLSIZE: ${DB_POOL_SIZE:-5}
   SPRING_DATASOURCE_HIKARI_MINIMUMIDLE: 1
 
@@ -29,7 +29,7 @@ services:
   # ------------------------------------------------------------------ Hạ tầng
   postgres:
     image: postgres:16-alpine
-    # Dư địa cho 15 service dùng DB + db-init + psql thủ công (mặc định chỉ 100)
+    # Dư địa cho 17 service dùng DB + db-init + psql thủ công (mặc định chỉ 100)
     command: ["postgres", "-c", "max_connections=200"]
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-shop}
@@ -142,6 +142,8 @@ services:
       REVIEW_SERVICE_URL: http://review-service:8095
       PROMOTION_SERVICE_URL: http://promotion-service:8096
       AUDIT_SERVICE_URL: http://audit-service:8097
+      SUPPORT_SERVICE_URL: http://support-service:8098
+      RECOMMENDATION_SERVICE_URL: http://recommendation-service:8099
       # Rate limit (đếm qua Redis). Khi chạy k6 tải nặng có thể đặt RATE_LIMIT_ENABLED=false
       REDIS_HOST: redis
       RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
@@ -257,6 +259,20 @@ services:
     environment:
       <<: *service-env
       DB_URL: jdbc:postgresql://postgres:5432/notification_db
+      # Chuyển tiếp cảnh báo của Alertmanager (token phải trùng infra/alertmanager/alertmanager.yml)
+      ALERT_WEBHOOK_TOKEN: ${ALERT_WEBHOOK_TOKEN:-change-me-alert-webhook-token}
+      ALERT_SLACK_WEBHOOK_URL: ${ALERT_SLACK_WEBHOOK_URL:-}
+      ALERT_DISCORD_WEBHOOK_URL: ${ALERT_DISCORD_WEBHOOK_URL:-}
+      ALERT_TELEGRAM_BOT_TOKEN: ${ALERT_TELEGRAM_BOT_TOKEN:-}
+      ALERT_TELEGRAM_CHAT_ID: ${ALERT_TELEGRAM_CHAT_ID:-}
+      # Email cảnh báo – mặc định gửi vào Mailpit (http://localhost:8025); đổi SMTP_* để gửi email thật
+      ALERT_EMAIL_TO: ${ALERT_EMAIL_TO:-admin@shop.local}
+      SMTP_HOST: ${SMTP_HOST:-mailpit}
+      SMTP_PORT: ${SMTP_PORT:-1025}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_AUTH: ${SMTP_AUTH:-false}
+      SMTP_STARTTLS: ${SMTP_STARTTLS:-false}
 
   analytics-service:
     <<: *service
@@ -270,6 +286,8 @@ services:
       DB_URL: jdbc:postgresql://postgres:5432/analytics_db
       ORDER_SPIKE_THRESHOLD: ${ORDER_SPIKE_THRESHOLD:-30}
       PAYMENT_FAILURE_THRESHOLD: ${PAYMENT_FAILURE_THRESHOLD:-5}
+      # Khôi phục Dashboard từ snapshot trong CSDL thay vì đọc lại toàn bộ analytics-events khi khởi động
+      DASHBOARD_SNAPSHOT_ENABLED: ${DASHBOARD_SNAPSHOT_ENABLED:-true}
     volumes:
       - streams-state:/tmp/kafka-streams
 
@@ -344,6 +362,32 @@ services:
       <<: *service-env
       DB_URL: jdbc:postgresql://postgres:5432/audit_db
 
+  # Hỗ trợ khách hàng: yêu cầu hỗ trợ + chat realtime (SSE) + SLA phản hồi
+  support-service:
+    <<: *service
+    build:
+      context: .
+      dockerfile: docker/service.Dockerfile
+      args:
+        SERVICE: support-service
+    environment:
+      <<: *service-env
+      DB_URL: jdbc:postgresql://postgres:5432/support_db
+      SUPPORT_SLA_NORMAL: ${SUPPORT_SLA_NORMAL:-PT2H}
+
+  # Gợi ý sản phẩm (AI Recommendation): học trực tuyến từ product/order/user-activity/cart/review-events
+  recommendation-service:
+    <<: *service
+    build:
+      context: .
+      dockerfile: docker/service.Dockerfile
+      args:
+        SERVICE: recommendation-service
+    environment:
+      <<: *service-env
+      DB_URL: jdbc:postgresql://postgres:5432/recommendation_db
+      REC_ATTRIBUTION_WINDOW: ${REC_ATTRIBUTION_WINDOW:-24h}
+
   # Khách hàng ảo + nhân viên ảo: tạo lưu lượng mua sắm ngẫu nhiên liên tục qua API Gateway.
   # Điều khiển tại http://localhost:3000/admin/simulator (tài khoản ADMIN).
   simulator-service:
@@ -375,6 +419,29 @@ services:
       - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./infra/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
       - prometheus-data:/prometheus
+    depends_on:
+      - alertmanager
+
+  # Gom nhóm / chống lặp cảnh báo của Prometheus rồi gửi webhook tới notification-service
+  # (thông báo trong ứng dụng + Slack/Discord/Telegram/email). UI: http://localhost:9093 (chỉ localhost)
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+    ports:
+      - "127.0.0.1:9093:9093"
+    volumes:
+      - ./infra/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager-data:/alertmanager
+
+  # Hộp thư SMTP giả lập: mọi email cảnh báo được giữ lại và xem tại http://localhost:8025 (không gửi ra Internet)
+  mailpit:
+    image: axllent/mailpit:v1.21.8
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8025:8025"
 
   grafana:
     image: grafana/grafana:11.3.0
@@ -420,3 +487,4 @@ volumes:
   streams-state:
   prometheus-data:
   grafana-data:
+  alertmanager-data:

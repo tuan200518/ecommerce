@@ -8,6 +8,7 @@ import { ProductQuestions, ProductReviews } from '../../components/Reviews';
 import { money } from '../../utils/format';
 import { FlashPrice } from '../../components/Promotions';
 import { useFlashOffers } from '../../hooks/useFlashSales';
+import { RecommendationStrip } from '../../components/Recommendations';
 
 export default function ProductDetailPage() {
   const { id } = useParams();
@@ -83,6 +84,9 @@ export default function ProductDetailPage() {
         <ErrorBox error={error} />
       </div>
     </div>
+    <RecommendationStrip path={`products/${product.id}/bought-together`} query={{ limit: 4 }}
+                         title="🛍️ Thường được mua cùng" subtitle="Từ các đơn hàng đã thanh toán" />
+    <RecommendationStrip path={`products/${product.id}/similar`} query={{ limit: 8 }} title="Sản phẩm tương tự" />
     <ProductReviews productId={product.id} />
     <ProductQuestions productId={product.id} />
     </>

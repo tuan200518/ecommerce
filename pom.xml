@@ -37,6 +37,8 @@
         <module>services/review-service</module>
         <module>services/promotion-service</module>
         <module>services/audit-service</module>
+        <module>services/support-service</module>
+        <module>services/recommendation-service</module>
     </modules>
 
     <properties>

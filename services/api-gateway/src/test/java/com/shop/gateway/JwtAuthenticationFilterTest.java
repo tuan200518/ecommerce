@@ -142,6 +142,45 @@ class JwtAuthenticationFilterTest {
     }
 
     @Test
+    void supportAndAlerts_followRolePolicy() {
+        String customer = jwt.issue(7, "c@shop.local", Set.of(Roles.CUSTOMER));
+        String agent = jwt.issue(5, "support@shop.local", Set.of(Roles.SUPPORT_AGENT));
+        String admin = jwt.issue(1, "admin@shop.local", Set.of(Roles.ADMIN));
+
+        // Khách: yêu cầu của mình (service kiểm tra chủ sở hữu), không vào hàng đợi CSKH
+        assertThat(run(get("/api/support/tickets/mine", customer)).forwarded()).isNotNull();
+        assertThat(run(get("/api/support/admin/tickets", customer)).status()).isEqualTo(HttpStatus.FORBIDDEN);
+        assertThat(run(MockServerHttpRequest.get("/api/support/tickets/mine").build()).status())
+                .isEqualTo(HttpStatus.UNAUTHORIZED);
+        // CSKH: hàng đợi + Dashboard nhân viên, không xem lịch sử cảnh báo hệ thống
+        assertThat(run(get("/api/support/admin/tickets", agent)).forwarded()).isNotNull();
+        assertThat(run(get("/api/analytics/dashboard", agent)).forwarded()).isNotNull();
+        assertThat(run(get("/api/notifications/admin/alerts", agent)).status()).isEqualTo(HttpStatus.FORBIDDEN);
+        assertThat(run(get("/api/notifications/admin/alerts", admin)).forwarded()).isNotNull();
+        // Webhook nội bộ của Alertmanager không có route công khai
+        assertThat(AccessPolicy.isPublic(org.springframework.http.HttpMethod.POST, "/internal/alerts")).isFalse();
+    }
+
+    @Test
+    void recommendations_arePublic_exceptAdminStats() {
+        String customer = jwt.issue(7, "c@shop.local", Set.of(Roles.CUSTOMER));
+        String analyst = jwt.issue(3, "analyst@shop.local", Set.of(Roles.ANALYST));
+
+        // Khách vãng lai xem được gợi ý
+        assertThat(run(MockServerHttpRequest.get("/api/recommendations/trending").build()).forwarded()).isNotNull();
+        assertThat(run(MockServerHttpRequest.get("/api/recommendations/products/5/similar").build()).forwarded()).isNotNull();
+        assertThat(run(MockServerHttpRequest.post("/api/recommendations/clicks").build()).forwarded()).isNotNull();
+        // Khách đã đăng nhập: danh tính được chuyển tiếp để cá nhân hóa
+        Result forYou = run(get("/api/recommendations/for-you", customer));
+        assertThat(forYou.forwarded().getRequest().getHeaders().getFirst(AuthHeaders.USER_ID)).isEqualTo("7");
+        // Thống kê / hồ sơ khách: chỉ nhân viên phân tích
+        assertThat(run(MockServerHttpRequest.get("/api/recommendations/admin/stats").build()).status())
+                .isEqualTo(HttpStatus.UNAUTHORIZED);
+        assertThat(run(get("/api/recommendations/admin/stats", customer)).status()).isEqualTo(HttpStatus.FORBIDDEN);
+        assertThat(run(get("/api/recommendations/admin/users/7", analyst)).forwarded()).isNotNull();
+    }
+
+    @Test
     void correlationId_isGeneratedOrPropagated() {
         CorrelationIdFilter correlation = new CorrelationIdFilter();
         AtomicReference<ServerWebExchange> forwarded = new AtomicReference<>();

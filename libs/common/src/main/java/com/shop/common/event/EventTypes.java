@@ -80,6 +80,13 @@ public final class EventTypes {
     /** Mã giảm giá không hợp lệ / hết suất flash sale → Order Service hủy đơn. */
     public static final String PROMOTION_REJECTED = "PromotionRejected";
     public static final String VOUCHER_ISSUED = "VoucherIssued";
+    /** Đơn bị hủy → hoàn suất / lượt ưu đãi; Analytics trừ lại khoản giảm giá đã tính. */
+    public static final String PROMOTION_RELEASED = "PromotionReleased";
+
+    // support-events
+    public static final String TICKET_CREATED = "TicketCreated";
+    public static final String TICKET_STATUS_CHANGED = "TicketStatusChanged";
+    public static final String TICKET_MESSAGE_POSTED = "TicketMessagePosted";
 
     // audit-events
     public static final String AUDIT_RECORDED = "AuditRecorded";

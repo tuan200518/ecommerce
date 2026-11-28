@@ -30,6 +30,11 @@ public final class PromotionEvents {
                                    String summary) {
     }
 
+    /** Đơn có ưu đãi bị hủy: suất flash sale và lượt voucher đã được hoàn lại. */
+    public record PromotionReleased(long orderId, long userId, BigDecimal itemDiscount, BigDecimal voucherDiscount,
+                                    BigDecimal totalDiscount) {
+    }
+
     /** Không áp dụng được ưu đãi khách đã chọn (voucher hết hạn/hết lượt, hết suất flash sale...). */
     public record PromotionRejected(long orderId, long userId, String voucherCode, String reason) {
     }

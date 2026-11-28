@@ -41,10 +41,18 @@ public final class AccessPolicy {
             new Rule(HttpMethod.GET, "/api/shipments/carriers"),
             new Rule(HttpMethod.GET, "/api/loyalty/rewards"),
             new Rule(HttpMethod.GET, "/api/promotions/flash-sales/active"),
-            new Rule(HttpMethod.GET, "/api/promotions/vouchers/public"));
+            new Rule(HttpMethod.GET, "/api/promotions/vouchers/public"),
+            // Gợi ý sản phẩm: công khai (khách đã đăng nhập vẫn được gắn X-User-* → gợi ý cá nhân hóa).
+            // Liệt kê từng đường dẫn để /api/recommendations/admin/** KHÔNG bị coi là công khai.
+            new Rule(HttpMethod.GET, "/api/recommendations/products/*/similar"),
+            new Rule(HttpMethod.GET, "/api/recommendations/products/*/bought-together"),
+            new Rule(HttpMethod.GET, "/api/recommendations/for-you"),
+            new Rule(HttpMethod.GET, "/api/recommendations/trending"),
+            new Rule(HttpMethod.GET, "/api/recommendations/cart"),
+            new Rule(HttpMethod.POST, "/api/recommendations/clicks"));
 
     private static final Set<String> STAFF = Set.of(Roles.ADMIN, Roles.ANALYST, Roles.PRODUCT_MANAGER,
-            Roles.WAREHOUSE_MANAGER);
+            Roles.WAREHOUSE_MANAGER, Roles.SUPPORT_AGENT);
 
     /** Đường dẫn yêu cầu vai trò cụ thể – quy tắc ĐẦU TIÊN khớp được áp dụng. */
     private static final List<RoleRule> ROLE_RULES = List.of(
@@ -59,6 +67,12 @@ public final class AccessPolicy {
             new RoleRule("/api/reviews/admin/**", Set.of(Roles.ADMIN, Roles.PRODUCT_MANAGER)),
             // Promotion: quản trị chiến dịch/voucher (service kiểm tra lại quyền ghi: ADMIN/PRODUCT_MANAGER)
             new RoleRule("/api/promotions/admin/**", Set.of(Roles.ADMIN, Roles.PRODUCT_MANAGER, Roles.ANALYST)),
+            // Hỗ trợ khách hàng: hàng đợi CSKH (service chỉ cho ADMIN/SUPPORT_AGENT trả lời, ANALYST chỉ xem)
+            new RoleRule("/api/support/admin/**", Set.of(Roles.ADMIN, Roles.SUPPORT_AGENT, Roles.ANALYST)),
+            // Lịch sử cảnh báo hệ thống + kênh chuyển tiếp
+            new RoleRule("/api/notifications/admin/**", Set.of(Roles.ADMIN)),
+            // Hiệu quả gợi ý + hồ sơ sở thích khách hàng
+            new RoleRule("/api/recommendations/admin/**", Set.of(Roles.ADMIN, Roles.ANALYST, Roles.PRODUCT_MANAGER)),
             // Nhật ký kiểm toán: chỉ quản trị viên
             new RoleRule("/api/audit", Set.of(Roles.ADMIN)),
             new RoleRule("/api/audit/**", Set.of(Roles.ADMIN)),

@@ -8,6 +8,7 @@ import com.shop.simulator.SimulatorProperties;
  * @param suspiciousRate tỷ lệ phiên là "khách đáng ngờ" (tài khoản mới, đơn rất lớn) → Fraud Service gắn cờ
  * @param reviewRate     tỷ lệ phiên khách quay lại đánh giá sản phẩm đã nhận
  * @param autoRiskReview nhân viên xác minh ảo tự duyệt/từ chối đơn bị gắn cờ sau ~45 giây
+ * @param recommendationRate xác suất khách bấm vào một sản phẩm được gợi ý (rồi thường bỏ vào giỏ)
  */
 public record SimulatorSettings(
         double sessionsPerMinute,
@@ -24,13 +25,17 @@ public record SimulatorSettings(
         double reviewRate,
         boolean autoRiskReview,
         double voucherRate,
-        double flashSaleRate) {
+        double flashSaleRate,
+        double supportRate,
+        boolean autoSupport,
+        double recommendationRate) {
 
     public static SimulatorSettings from(SimulatorProperties p) {
         return new SimulatorSettings(p.sessionsPerMinute(), p.maxConcurrentSessions(), p.browseOnlyRate(),
                 p.cartAbandonRate(), p.paymentFailureRate(), p.cancelRate(), p.newCustomerRate(), p.wave(),
                 p.autoRestock(), p.autoFulfill(), p.suspiciousRate(), p.reviewRate(), p.autoRiskReview(),
-                p.voucherRate(), p.flashSaleRate()).validated();
+                p.voucherRate(), p.flashSaleRate(), p.supportRate(), p.autoSupport(),
+                p.recommendationRate()).validated();
     }
 
     /** Ép các giá trị vào khoảng hợp lệ để cấu hình sai không làm treo/hỏng mô phỏng. */
@@ -48,7 +53,10 @@ public record SimulatorSettings(
                 clamp(reviewRate, 0, 1),
                 autoRiskReview,
                 clamp(voucherRate, 0, 1),
-                clamp(flashSaleRate, 0, 1));
+                clamp(flashSaleRate, 0, 1),
+                clamp(supportRate, 0, 1),
+                autoSupport,
+                clamp(recommendationRate, 0, 1));
     }
 
     private static double clamp(double v, double min, double max) {

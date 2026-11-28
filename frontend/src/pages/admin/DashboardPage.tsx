@@ -131,6 +131,8 @@ export default function DashboardPage() {
         <Kpi label="Tỷ lệ xem → đặt hàng" value={`${k.viewToOrderRate ?? 0}%`} hint={`${number(k.productViews)} lượt xem sản phẩm`} />
         <Kpi label="Đơn bị gắn cờ rủi ro" value={number(k.flaggedOrders)} hint="chờ / đã xác minh thủ công" tone={k.flaggedOrders > 0 ? 'bad' : undefined} />
         <Kpi label="Giao thành công" value={number(k.shipmentsDelivered)} hint={`${number(k.reviews)} đánh giá sản phẩm`} />
+        <Kpi label="Giảm giá khuyến mãi" value={money(k.promotionDiscount ?? 0)} hint={`${number(k.discountedOrders ?? 0)} đơn hưởng ưu đãi (đã trừ đơn hủy)`} />
+        <Kpi label="Yêu cầu hỗ trợ" value={number(k.ticketsCreated ?? 0)} hint={`${number(k.ticketsResolved ?? 0)} đã giải quyết`} />
       </div>
 
       <div className="grid-2">

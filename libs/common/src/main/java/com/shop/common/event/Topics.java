@@ -28,6 +28,8 @@ public final class Topics {
     public static final String PROMOTION_EVENTS = "promotion-events";
     /** Nhật ký kiểm toán thao tác quản trị / bảo mật (producer: mọi service, consumer: audit-service). */
     public static final String AUDIT_EVENTS = "audit-events";
+    /** Vòng đời yêu cầu hỗ trợ và tin nhắn chat (producer: support-service). */
+    public static final String SUPPORT_EVENTS = "support-events";
 
     /** Hậu tố topic Dead Letter (mặc định của Spring Kafka DeadLetterPublishingRecoverer). */
     public static final String DLT_SUFFIX = "-dlt";
@@ -36,7 +38,7 @@ public final class Topics {
             USER_EVENTS, PRODUCT_EVENTS, CART_EVENTS, ORDER_EVENTS,
             PAYMENT_EVENTS, INVENTORY_EVENTS, NOTIFICATION_EVENTS, ANALYTICS_EVENTS,
             USER_ACTIVITY_EVENTS, FRAUD_ALERT_EVENTS, SHIPPING_EVENTS, LOYALTY_EVENTS, REVIEW_EVENTS,
-            PROMOTION_EVENTS, AUDIT_EVENTS);
+            PROMOTION_EVENTS, AUDIT_EVENTS, SUPPORT_EVENTS);
 
     private Topics() {
     }

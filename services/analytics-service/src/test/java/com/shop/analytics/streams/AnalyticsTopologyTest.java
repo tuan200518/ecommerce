@@ -16,6 +16,9 @@ import com.shop.common.event.payload.OrderEvents.OrderLine;
 import com.shop.common.event.payload.OrderEvents.OrderStatusChanged;
 import com.shop.common.event.payload.OrderEvents.PaymentRequested;
 import com.shop.common.event.payload.PaymentEvents.PaymentResult;
+import com.shop.common.event.payload.PromotionEvents.PromotionApplied;
+import com.shop.common.event.payload.PromotionEvents.PromotionReleased;
+import com.shop.common.event.payload.SupportEvents.TicketChanged;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.apache.kafka.common.serialization.StringSerializer;
 import org.apache.kafka.streams.KeyValue;
@@ -157,6 +160,37 @@ class AnalyticsTopologyTest {
                 // Chỉ khách đã đăng nhập được tính là người dùng hoạt động
                 .anyMatch(m -> m.metric().equals("active_users_5m") && m.value() == 1)
                 .noneMatch(m -> m.metric().equals("active_users_5m") && m.value() > 1);
+    }
+
+    @Test
+    void promotionDiscount_isNetOfCancelledOrders_andSupportTicketsAreCounted() {
+        TestInputTopic<String, String> promotions = driver.createInputTopic(Topics.PROMOTION_EVENTS,
+                new StringSerializer(), new StringSerializer());
+        TestInputTopic<String, String> support = driver.createInputTopic(Topics.SUPPORT_EVENTS,
+                new StringSerializer(), new StringSerializer());
+        promotions.pipeInput("1", json(EventEnvelope.create(mapper, EventTypes.PROMOTION_APPLIED, "promotion-service", "1",
+                new PromotionApplied(1, 7, "SALE", List.of(), new BigDecimal("100000"), new BigDecimal("50000"),
+                        new BigDecimal("150000"), "x"))), t0);
+        // Đơn không có ưu đãi (giảm 0đ) không được tính là đơn hưởng ưu đãi
+        promotions.pipeInput("2", json(EventEnvelope.create(mapper, EventTypes.PROMOTION_APPLIED, "promotion-service", "2",
+                new PromotionApplied(2, 7, null, List.of(), BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, "none"))), t0);
+        promotions.pipeInput("3", json(EventEnvelope.create(mapper, EventTypes.PROMOTION_APPLIED, "promotion-service", "3",
+                new PromotionApplied(3, 8, null, List.of(), new BigDecimal("40000"), BigDecimal.ZERO,
+                        new BigDecimal("40000"), "x"))), t0.plusSeconds(1));
+        promotions.pipeInput("3", json(EventEnvelope.create(mapper, EventTypes.PROMOTION_RELEASED, "promotion-service", "3",
+                new PromotionReleased(3, 8, new BigDecimal("40000"), BigDecimal.ZERO, new BigDecimal("40000")))), t0.plusSeconds(2));
+        support.pipeInput("9", json(EventEnvelope.create(mapper, EventTypes.TICKET_CREATED, "support-service", "9",
+                new TicketChanged(9, "HT-9", 7, 1L, "ORDER", "NORMAL", null, "OPEN", null))), t0);
+        support.pipeInput("9", json(EventEnvelope.create(mapper, EventTypes.TICKET_STATUS_CHANGED, "support-service", "9",
+                new TicketChanged(9, "HT-9", 7, 1L, "ORDER", "NORMAL", "OPEN", "IN_PROGRESS", "cskh@shop.local"))), t0);
+        support.pipeInput("9", json(EventEnvelope.create(mapper, EventTypes.TICKET_STATUS_CHANGED, "support-service", "9",
+                new TicketChanged(9, "HT-9", 7, 1L, "ORDER", "NORMAL", "IN_PROGRESS", "RESOLVED", "cskh@shop.local"))), t0);
+
+        Map<String, MetricUpdate> latest = latestMetrics();
+        assertThat(latest.get("promotion_discount:all").value()).isEqualTo(150000);
+        assertThat(latest.get("promotion_discount:all").count()).isEqualTo(1);
+        assertThat(latest.get("counter:tickets_created").value()).isEqualTo(1);
+        assertThat(latest.get("counter:tickets_resolved").value()).isEqualTo(1);
     }
 
     // ------------------------------------------------------------------ helpers

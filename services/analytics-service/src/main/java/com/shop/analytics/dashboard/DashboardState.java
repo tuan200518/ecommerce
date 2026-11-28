@@ -19,6 +19,10 @@ import java.util.TreeMap;
 /**
  * Trạng thái Dashboard trong bộ nhớ, được dựng lại từ topic analytics-events (kết quả của Kafka Streams).
  * Thread-safe ở mức phương thức.
+ * <p>
+ * Kèm theo vị trí (offset) đã áp dụng trên từng partition: {@link DashboardSnapshotStore} lưu định kỳ
+ * {@link #export()} xuống CSDL, khi khởi động lại thì {@link #restore} rồi consumer chỉ đọc tiếp phần còn thiếu
+ * thay vì đọc lại toàn bộ topic.
  */
 @Component
 public class DashboardState {
@@ -36,7 +40,8 @@ public class DashboardState {
                        long activeUsers, long lowStockProducts, double paymentSuccessRate,
                        long paymentsCompleted, long paymentsFailed, double cartToOrderRate, double averageOrderValue,
                        long productViews, double viewToOrderRate, long flaggedOrders, long shipmentsDelivered,
-                       long reviews) {
+                       long reviews, double promotionDiscount, long discountedOrders, long ticketsCreated,
+                       long ticketsResolved) {
     }
 
     public record Snapshot(long generatedAt, Kpis kpis,
@@ -47,6 +52,19 @@ public class DashboardState {
                            KafkaStats kafka) {
     }
 
+    /** Điểm theo cửa sổ thời gian (người dùng hoạt động: khóa = đầu cửa sổ, point.t = cuối cửa sổ). */
+    public record WindowPoint(long windowStart, Point point) {
+    }
+
+    /** Bản sao trạng thái để lưu xuống CSDL (JSON). Đổi cấu trúc → tăng {@link #FORMAT}, bản cũ bị bỏ qua. */
+    public record Persisted(int format, String topicId, Map<Integer, Long> offsets,
+                            Map<String, List<Point>> series, List<WindowPoint> activeUsers,
+                            Map<String, Long> statusCounts, List<ProductStat> products, List<StockInfo> stock,
+                            Map<String, Long> counters, List<Alert> alerts, double revenueTotal, long revenuePayments,
+                            double promotionDiscount, long discountedOrders) {
+    }
+
+    public static final int FORMAT = 1;
     private static final int MAX_ALERTS = 50;
 
     private final Map<String, NavigableMap<Long, Point>> series = new HashMap<>();
@@ -58,11 +76,19 @@ public class DashboardState {
     private final Deque<Alert> alerts = new ArrayDeque<>();
     private double revenueTotal;
     private long revenuePayments;
+    private double promotionDiscount;
+    private long discountedOrders;
     private KafkaStats kafka;
     private boolean dirty;
+    /** partition → offset cuối cùng đã áp dụng (của topic analytics-events có id {@link #topicId}). */
+    private final Map<Integer, Long> offsets = new HashMap<>();
+    private String topicId;
+    /** Tăng mỗi khi dữ liệu thay đổi – để biết có cần lưu snapshot mới hay không. */
+    private long version;
 
     public synchronized void apply(MetricUpdate m) {
         dirty = true;
+        version++;
         switch (m.metric()) {
             case "revenue_1m" -> putSeries(m, 180);
             case "revenue_5m" -> putSeries(m, 144);
@@ -78,6 +104,10 @@ public class DashboardState {
             case "revenue_total" -> {
                 revenueTotal = m.value();
                 revenuePayments = m.count();
+            }
+            case "promotion_discount" -> {
+                promotionDiscount = m.value();
+                discountedOrders = m.count();
             }
             case "orders_by_status" -> statusCounts.put(m.key(), (long) m.value());
             case "counter" -> counters.put(m.key(), (long) m.value());
@@ -105,7 +135,109 @@ public class DashboardState {
             alerts.removeLast();
         }
         dirty = true;
+        version++;
         return true;
+    }
+
+    // ------------------------------------------------------------------ Vị trí đọc + snapshot
+
+    /** Ghi nhận đã áp dụng xong message tại (partition, offset). */
+    public synchronized void markApplied(int partition, long offset) {
+        offsets.merge(partition, offset, Math::max);
+        version++;
+    }
+
+    /**
+     * Offset tiếp theo cần đọc cho mỗi partition đã biết. Nếu topic hiện tại có id khác với topic mà trạng thái
+     * được dựng từ đó (topic bị xóa/tạo lại) thì trạng thái cũ không còn đúng → xóa sạch và đọc lại từ đầu.
+     *
+     * @param currentTopicId id của topic analytics-events hiện tại, null nếu không xác định được (giữ nguyên trạng thái)
+     */
+    public synchronized Map<Integer, Long> resumePositions(String currentTopicId) {
+        if (currentTopicId != null) {
+            if (topicId != null && !topicId.equals(currentTopicId)) {
+                reset();
+            }
+            topicId = currentTopicId;
+        }
+        Map<Integer, Long> next = new HashMap<>();
+        offsets.forEach((p, o) -> next.put(p, o + 1));
+        return next;
+    }
+
+    public synchronized long version() {
+        return version;
+    }
+
+    public synchronized boolean isEmpty() {
+        return offsets.isEmpty() && counters.isEmpty() && series.isEmpty();
+    }
+
+    public synchronized Persisted export() {
+        Map<String, List<Point>> s = new LinkedHashMap<>();
+        series.forEach((k, v) -> s.put(k, new ArrayList<>(v.values())));
+        List<WindowPoint> users = new ArrayList<>();
+        activeUsers.forEach((start, p) -> users.add(new WindowPoint(start, p)));
+        return new Persisted(FORMAT, topicId, new HashMap<>(offsets), s, users, new LinkedHashMap<>(statusCounts),
+                new ArrayList<>(products.values()), new ArrayList<>(stock.values()), new LinkedHashMap<>(counters),
+                new ArrayList<>(alerts), revenueTotal, revenuePayments, promotionDiscount, discountedOrders);
+    }
+
+    public synchronized void restore(Persisted p) {
+        reset();
+        topicId = p.topicId();
+        if (p.offsets() != null) {
+            offsets.putAll(p.offsets());
+        }
+        if (p.series() != null) {
+            p.series().forEach((k, points) -> {
+                NavigableMap<Long, Point> m = new TreeMap<>();
+                points.forEach(pt -> m.put(pt.t(), pt));
+                series.put(k, m);
+            });
+        }
+        if (p.activeUsers() != null) {
+            p.activeUsers().forEach(w -> activeUsers.put(w.windowStart(), w.point()));
+        }
+        if (p.statusCounts() != null) {
+            statusCounts.putAll(p.statusCounts());
+        }
+        if (p.products() != null) {
+            p.products().forEach(x -> products.put(x.productId(), x));
+        }
+        if (p.stock() != null) {
+            p.stock().forEach(x -> stock.put(x.productId(), x));
+        }
+        if (p.counters() != null) {
+            counters.putAll(p.counters());
+        }
+        if (p.alerts() != null) {
+            alerts.addAll(p.alerts());
+        }
+        revenueTotal = p.revenueTotal();
+        revenuePayments = p.revenuePayments();
+        promotionDiscount = p.promotionDiscount();
+        discountedOrders = p.discountedOrders();
+        dirty = true;
+    }
+
+    /** Xóa toàn bộ dữ liệu (giữ thông tin Kafka monitor). */
+    public synchronized void reset() {
+        series.clear();
+        activeUsers.clear();
+        statusCounts.clear();
+        products.clear();
+        stock.clear();
+        counters.clear();
+        alerts.clear();
+        offsets.clear();
+        topicId = null;
+        revenueTotal = 0;
+        revenuePayments = 0;
+        promotionDiscount = 0;
+        discountedOrders = 0;
+        dirty = true;
+        version++;
     }
 
     public synchronized void updateKafka(KafkaStats stats) {
@@ -140,7 +272,8 @@ public class DashboardState {
                 revenuePayments == 0 ? 0 : round(revenueTotal / revenuePayments),
                 views, views == 0 ? 0 : round(100.0 * created / views),
                 counters.getOrDefault("orders_flagged", 0L), counters.getOrDefault("shipments_delivered", 0L),
-                counters.getOrDefault("reviews", 0L));
+                counters.getOrDefault("reviews", 0L), promotionDiscount, discountedOrders,
+                counters.getOrDefault("tickets_created", 0L), counters.getOrDefault("tickets_resolved", 0L));
         return new Snapshot(now, kpis,
                 list("revenue_1m", 60), list("revenue_5m", 48), list("revenue_1h", 24),
                 list("orders_1m", 60), list("payment_failed_1m", 60),

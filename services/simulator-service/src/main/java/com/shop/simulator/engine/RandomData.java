@@ -75,6 +75,26 @@ final class RandomData {
         return pick(QUESTIONS);
     }
 
+    /** Yêu cầu hỗ trợ mẫu: {chủ đề, tiêu đề, nội dung}. */
+    private static final List<String[]> SUPPORT = List.of(
+            new String[]{"SHIPPING", "Đơn hàng giao chậm", "Đơn của mình đặt mấy hôm rồi mà chưa thấy giao, shop kiểm tra giúp với."},
+            new String[]{"ORDER", "Muốn đổi địa chỉ nhận hàng", "Mình muốn đổi địa chỉ giao sang chỗ làm được không ạ?"},
+            new String[]{"PAYMENT", "Bị trừ tiền nhưng đơn bị hủy", "Thẻ của mình đã bị trừ tiền nhưng đơn lại báo hủy, khi nào được hoàn ạ?"},
+            new String[]{"PRODUCT", "Hỏi về bảo hành", "Sản phẩm trong đơn này bảo hành ở đâu, bao lâu vậy shop?"},
+            new String[]{"PROMOTION", "Mã giảm giá không áp dụng", "Mình nhập mã nhưng báo không hợp lệ, shop xem giúp."});
+    private static final List<String> AGENT_REPLIES = List.of(
+            "Chào bạn, CSKH đã kiểm tra đơn hàng và chuyển yêu cầu tới bộ phận liên quan. Bạn vui lòng chờ thêm ít phút nhé.",
+            "Cảm ơn bạn đã liên hệ! Mình đã cập nhật thông tin, nếu còn vướng mắc bạn cứ trả lời tại đây nhé.",
+            "Dạ shop đã xử lý xong, khoản tiền (nếu có) sẽ được hoàn trong 3–5 ngày làm việc ạ.");
+
+    static String[] supportRequest() {
+        return SUPPORT.get(rnd().nextInt(SUPPORT.size()));
+    }
+
+    static String agentReply() {
+        return pick(AGENT_REPLIES);
+    }
+
     static long thinkMillis(int min, int max) {
         return min + rnd().nextInt(Math.max(1, max - min));
     }

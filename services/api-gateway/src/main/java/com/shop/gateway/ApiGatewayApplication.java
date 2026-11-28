@@ -44,6 +44,8 @@ public class ApiGatewayApplication {
                 .route("review-service", r -> r.path("/api/reviews/**").uri(urls.review()))
                 .route("promotion-service", r -> r.path("/api/promotions/**").uri(urls.promotion()))
                 .route("audit-service", r -> r.path("/api/audit", "/api/audit/**").uri(urls.audit()))
+                .route("support-service", r -> r.path("/api/support/**").uri(urls.support()))
+                .route("recommendation-service", r -> r.path("/api/recommendations/**").uri(urls.recommendation()))
                 .build();
     }
 

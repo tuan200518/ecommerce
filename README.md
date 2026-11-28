@@ -6,6 +6,10 @@ Nền tảng thương mại điện tử theo kiến trúc **Microservices + Eve
 
 **Phiên bản 2.1** bổ sung: Promotion (flash sale có giới hạn suất và giới hạn mỗi tài khoản, mã giảm giá, đổi điểm thưởng lấy voucher – định giá trong Saga), bảo mật (rate limit ở Gateway, tạm khóa tài khoản khi dò mật khẩu, nhật ký kiểm toán + cảnh báo bảo mật) và vận hành (Prometheus + Grafana, luật cảnh báo).
 
+**Phiên bản 2.2** bổ sung: Hỗ trợ khách hàng (yêu cầu hỗ trợ gắn với đơn hàng, chat realtime giữa khách và CSKH qua SSE, SLA phản hồi, đánh giá hài lòng) và cảnh báo qua email/chat (Alertmanager → thông báo trong ứng dụng, Slack, Discord, Telegram, email; hộp thư Mailpit cho môi trường demo).
+
+**Phiên bản 2.3** bổ sung: Gợi ý sản phẩm (AI Recommendation – "Dành cho bạn", "Sản phẩm tương tự", "Thường được mua cùng", gợi ý trong giỏ, thịnh hành; học trực tuyến từ luồng sự kiện, mỗi gợi ý kèm lý do, đo CTR và đơn hàng phát sinh từ gợi ý) và Dashboard khởi động nhanh (khôi phục từ snapshot thay vì đọc lại toàn bộ topic).
+
 **Công nghệ:** Java 21 · Spring Boot 3.5 · Spring Cloud Gateway · Apache Kafka 3.9 (KRaft) · Kafka Streams · PostgreSQL 16 · Redis 7 · React 18 + TypeScript · Apache ECharts · SSE · Docker Compose · JUnit 5 / Embedded Kafka / Testcontainers / k6
 
 ```mermaid
@@ -13,30 +17,33 @@ flowchart LR
     Web[React Web<br/>Customer + Admin] -->|REST / SSE| GW[API Gateway<br/>JWT, routing]
     GW --> AUTH[Auth] & USER[User] & PROD[Product] & CART[Cart] & ORD[Order] & INV[Inventory] & PAY[Payment] & NOTI[Notification] & ANA[Analytics]
     GW --> FRA[Fraud] & SHIP[Shipping] & LOY[Loyalty] & REV[Review]
-    GW --> PRO[Promotion] & AUD[Audit]
+    GW --> PRO[Promotion] & AUD[Audit] & SUPP[Support] & REC[Recommendation]
     PROD -. product-events / user-activity-events .-> K[(Apache Kafka)]
     FRA -. fraud-alert-events .-> K
     SHIP -. shipping-events .-> K
     LOY -. loyalty-events .-> K
     REV -. review-events .-> K
     PRO -. promotion-events .-> K
+    SUPP -. support-events .-> K
     AUTH & PROD & ORD & PRO -. audit-events .-> K
     AUTH -. user-events .-> K
     CART -. cart-events .-> K
     ORD -. order-events / notification-events .-> K
     INV -. inventory-events .-> K
     PAY -. payment-events .-> K
-    K -. sự kiện .-> ORD & INV & PAY & CART & USER & NOTI & FRA & SHIP & LOY & REV & PRO & AUD
+    K -. sự kiện .-> ORD & INV & PAY & CART & USER & NOTI & FRA & SHIP & LOY & REV & PRO & AUD & SUPP & REC
     K ==> KS[Kafka Streams<br/>windowing, aggregation] ==> |analytics-events| ANA
     PROD & GW --- R[(Redis<br/>cache + rate limit)]
     PM[Prometheus] -. scrape /actuator/prometheus .-> GW & ORD & PRO
     GF[Grafana] --> PM
-    AUTH & USER & PROD & CART & ORD & INV & PAY & NOTI & ANA & FRA & SHIP & LOY & REV & PRO & AUD --- PG[(PostgreSQL<br/>database riêng mỗi service)]
+    PM -. cảnh báo .-> AM[Alertmanager] -. webhook .-> NOTI
+    NOTI -. email / chat .-> CH[Slack · Discord · Telegram · Email]
+    AUTH & USER & PROD & CART & ORD & INV & PAY & NOTI & ANA & FRA & SHIP & LOY & REV & PRO & AUD & SUPP & REC --- PG[(PostgreSQL<br/>database riêng mỗi service)]
 ```
 
 ## 1. Chạy toàn bộ hệ thống (Docker Compose)
 
-Yêu cầu: Docker Desktop (khuyến nghị cấp ≥ 10 GB RAM cho Docker – bản 2.1 chạy 17 JVM + Prometheus + Grafana, dùng khoảng 7–8 GB).
+Yêu cầu: Docker Desktop (khuyến nghị cấp ≥ 10 GB RAM cho Docker – bản 2.2 chạy 18 JVM + Prometheus, Grafana, Alertmanager, Mailpit, dùng khoảng 8 GB).
 
 ```bash
 cp .env.example .env          # tùy chọn: chỉnh cấu hình
@@ -53,6 +60,8 @@ docker compose ps             # chờ các service ở trạng thái running
 | PostgreSQL | `localhost:5433` (shop / shop) – đổi bằng `POSTGRES_HOST_PORT` |
 | Grafana (dashboard giám sát 17 service) | http://localhost:3001 (admin / `GRAFANA_PASSWORD`, mặc định `admin`) |
 | Prometheus (metric, cảnh báo) | http://localhost:9090 – chỉ mở trên localhost |
+| Alertmanager (gom nhóm / chống lặp cảnh báo) | http://localhost:9093 – chỉ mở trên localhost |
+| Mailpit (hộp thư nhận email cảnh báo, không gửi ra ngoài) | http://localhost:8025 – chỉ mở trên localhost |
 
 > Mỗi lần `up`/khởi động lại, các service Java cần 1–5 phút để cùng lên (17 JVM khởi động song song). Trong lúc đó Gateway trả **503 "Dịch vụ đang khởi động…"** cho service chưa sẵn sàng — không phải lỗi dữ liệu, chỉ cần đợi. Theo dõi bằng `docker compose logs -f product-service auth-service` (dòng `Started …Application`) hoặc trên Grafana ô "Service đang chạy" = 17.
 
@@ -64,6 +73,7 @@ Khi khởi động lần đầu, dữ liệu mẫu được tạo tự động: 
 | Product Manager | `pm@shop.local` | `Manager@123` |
 | Warehouse Manager | `warehouse@shop.local` | `Manager@123` |
 | Analyst | `analyst@shop.local` | `Analyst@123` |
+| Nhân viên CSKH | `support@shop.local` | `Support@123` |
 | Customer | `customer@shop.local`, `customer1..50@shop.local` | `Customer@123` |
 
 Dừng hệ thống: `docker compose down` (thêm `-v` để xóa dữ liệu).
@@ -79,6 +89,8 @@ Nâng cấp từ bản trước: chỉ cần `docker compose up -d --build` — 
 5. Mở Kafka UI để xem các message trên `order-events`, `inventory-events`, `fraud-alert-events`, `payment-events`, `shipping-events`, `analytics-events`... — mọi message của cùng một lần đặt hàng mang chung header `correlationId` (bằng header `X-Correlation-Id` của response).
 6. **Ecommerce 2.0**: đơn ≥ 100 triệu từ tài khoản mới → **Đang xác minh** → `analyst@shop.local` xử lý ở *Rủi ro & gian lận*; `warehouse@shop.local` xử lý vận đơn ở *Vận chuyển*; khách xem điểm/hạng/mã giới thiệu ở *Thành viên* và đánh giá sản phẩm sau khi nhận hàng. Chi tiết: kịch bản D–G trong [docs/TESTING.md](docs/TESTING.md).
 7. **Ecommerce 2.1**: trang **🔥 Khuyến mãi** có flash sale đang chạy và mã `WELCOME10` / `FREESHIP` / `GIAM50K`; nhập mã ở bước thanh toán (báo giá trực tiếp, cảnh báo khi vượt giới hạn flash sale); đổi điểm lấy voucher ở *Thành viên*. Quản trị: *🎁 Khuyến mãi* (tạo flash sale / mã, thống kê), *🔐 Nhật ký kiểm toán* (ADMIN), *📡 Giám sát (Grafana)*. Kịch bản H–K trong [docs/TESTING.md](docs/TESTING.md).
+8. **Ecommerce 2.2**: khách mở **Hỗ trợ** (hoặc nút "Cần hỗ trợ về đơn này?" ở trang đơn hàng) để chat với CSKH; `support@shop.local` trả lời ở *🎧 Hỗ trợ khách hàng* – tin nhắn hiện ngay hai phía. ADMIN xem *🚨 Cảnh báo hệ thống* (gửi thử, lịch sử, kênh đang bật); email cảnh báo xem tại Mailpit http://localhost:8025. Kịch bản L–M trong [docs/TESTING.md](docs/TESTING.md).
+9. **Ecommerce 2.3**: trang chủ có khối *✨ Dành cho bạn* (khách vãng lai: *🔥 Đang thịnh hành*), trang sản phẩm có *🛍️ Thường được mua cùng* và *Sản phẩm tương tự*, giỏ hàng có *Có thể bạn cũng cần* – mỗi món kèm lý do gợi ý. ADMIN/ANALYST xem CTR, đơn hàng nhờ gợi ý và hồ sơ sở thích của khách ở *🧠 Gợi ý sản phẩm*. Kịch bản N–O trong [docs/TESTING.md](docs/TESTING.md).
 
 ### Khách hàng ảo (chạy sẵn khi `docker compose up`)
 
@@ -130,6 +142,8 @@ mvn test        # unit + integration test (Embedded Kafka, H2, TopologyTestDrive
 | `*ContextTest` | Khởi tạo toàn bộ cấu hình Spring của từng service |
 | `FraudServiceTest` / `RiskRulesTest`, `ShippingServiceTest`, `LoyaltyServiceTest`, `ReviewServiceTest` | Các service Ecommerce 2.0 – xem [docs/TESTING.md](docs/TESTING.md) mục 2b |
 | `PricingEngineTest`, `PromotionServiceTest`, `AuditServiceTest`, `LoginSecurityTest`, `RateLimitFilterTest` | Ecommerce 2.1: định giá khuyến mãi, giữ suất nguyên tử, voucher, đổi điểm, audit, khóa tài khoản, rate limit – xem mục 2c |
+| `SupportServiceTest`, `AlertRelayTest`, `UpstreamUnavailableFilterTest` | Ecommerce 2.2: hội thoại hỗ trợ, quyền, SLA, tự đóng; chuyển tiếp cảnh báo ra các kênh; 503 khi service chưa sẵn sàng – xem mục 2d |
+| `RecommendationServiceTest`, `ScoringTest`, `DashboardSnapshotTest` | Ecommerce 2.3: học từ sự kiện + các loại gợi ý, công thức chấm điểm, CTR / chuyển đổi; khôi phục Dashboard từ snapshot – xem mục 2e |
 
 ## 5. Cấu trúc thư mục
 
@@ -154,11 +168,14 @@ mvn test        # unit + integration test (Embedded Kafka, H2, TopologyTestDrive
 │   ├── shipping-service/    # Vận đơn, đơn vị vận chuyển, timeline giao hàng :8094
 │   ├── review-service/      # Đánh giá sản phẩm (người đã mua), hỏi đáp     :8095
 │   ├── promotion-service/   # Flash sale, voucher, đổi điểm → voucher, định giá đơn :8096
-│   └── audit-service/       # Nhật ký kiểm toán + cảnh báo bảo mật          :8097
+│   ├── audit-service/       # Nhật ký kiểm toán + cảnh báo bảo mật          :8097
+│   ├── support-service/     # Yêu cầu hỗ trợ + chat realtime (SSE) + SLA    :8098
+│   └── recommendation-service/ # Gợi ý sản phẩm học từ luồng sự kiện + đo CTR    :8099
 ├── frontend/                # React + TypeScript + ECharts (Nginx khi chạy Docker)
 ├── infra/postgres/          # Script tạo database cho từng service
 ├── infra/prometheus/        # Cấu hình scrape + luật cảnh báo
 ├── infra/grafana/           # Datasource + dashboard tự nạp
+├── infra/alertmanager/      # Gom nhóm cảnh báo → webhook notification-service
 ├── docker/                  # Dockerfile dùng chung cho các service
 ├── scripts/k6/              # Kịch bản giả lập & kiểm thử tải
 └── docs/                    # Kiến trúc, API, kiểm thử & demo

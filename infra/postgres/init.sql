@@ -7,7 +7,7 @@ FROM unnest(ARRAY[
     'auth_db', 'user_db', 'product_db', 'cart_db', 'order_db', 'inventory_db', 'payment_db',
     'notification_db', 'analytics_db',
     'fraud_db', 'loyalty_db', 'shipping_db', 'review_db',
-    'promotion_db', 'audit_db'
+    'promotion_db', 'audit_db', 'support_db', 'recommendation_db'
 ]) AS name
 WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = name)
 \gexec

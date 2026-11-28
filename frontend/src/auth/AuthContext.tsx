@@ -2,7 +2,7 @@ import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, 
 import { api, getToken, setToken } from '../api/client';
 import type { TokenResponse, User } from '../api/types';
 
-export const STAFF_ROLES = ['ADMIN', 'PRODUCT_MANAGER', 'WAREHOUSE_MANAGER', 'ANALYST'];
+export const STAFF_ROLES = ['ADMIN', 'PRODUCT_MANAGER', 'WAREHOUSE_MANAGER', 'ANALYST', 'SUPPORT_AGENT'];
 
 interface AuthState {
   user: User | null;

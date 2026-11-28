@@ -6,6 +6,7 @@ import { Empty, ErrorBox, Loading, Pagination } from '../../components/Common';
 import { money } from '../../utils/format';
 import { FlashPrice } from '../../components/Promotions';
 import { useFlashOffers } from '../../hooks/useFlashSales';
+import { RecommendationStrip } from '../../components/Recommendations';
 
 export default function ProductListPage() {
   const [params, setParams] = useSearchParams();
@@ -88,6 +89,11 @@ export default function ProductListPage() {
       </aside>
 
       <section>
+        {!query.q && !query.categoryId && !query.minPrice && !query.maxPrice && query.page === 0 && (
+          <RecommendationStrip path="for-you" query={{ limit: 8 }}
+                               title={(l) => (l.strategy === 'PERSONALIZED' ? '✨ Dành cho bạn' : '🔥 Đang thịnh hành')}
+                               subtitle="Gợi ý dựa trên hành vi mua sắm" />
+        )}
         <ErrorBox error={error} />
         {!data && !error && <Loading />}
         {data && data.content.length === 0 && <Empty>Không tìm thấy sản phẩm phù hợp.</Empty>}

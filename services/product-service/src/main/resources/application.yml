@@ -30,6 +30,10 @@ shop:
     ttl: PT10M
   seed:
     enabled: ${SEED_DATA:true}
+  # Phát lại danh mục lên product-events khi khởi động + định kỳ (sự kiện cũ hết hạn retention của Kafka)
+  catalog-republish:
+    enabled: ${CATALOG_REPUBLISH_ENABLED:true}
+    interval: ${CATALOG_REPUBLISH_INTERVAL:PT24H}
 
 management:
   endpoints:

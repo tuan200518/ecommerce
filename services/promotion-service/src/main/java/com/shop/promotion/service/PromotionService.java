@@ -11,6 +11,7 @@ import com.shop.common.event.payload.ProductEvents.ProductChanged;
 import com.shop.common.event.payload.PromotionEvents.AppliedLine;
 import com.shop.common.event.payload.PromotionEvents.PromotionApplied;
 import com.shop.common.event.payload.PromotionEvents.PromotionRejected;
+import com.shop.common.event.payload.PromotionEvents.PromotionReleased;
 import com.shop.common.event.payload.PromotionEvents.VoucherIssued;
 import com.shop.common.security.AuthenticatedUser;
 import com.shop.promotion.PromotionProperties;
@@ -225,6 +226,11 @@ public class PromotionService {
         }
     }
 
+    /** Số tiền VND nguyên đồng (tránh dạng 1E+7 khi serialize BigDecimal đọc từ CSDL). */
+    private static BigDecimal whole(BigDecimal v) {
+        return v.setScale(0, java.math.RoundingMode.HALF_UP);
+    }
+
     private static void rollback(List<Runnable> undo) {
         List<Runnable> reversed = new ArrayList<>(undo);
         Collections.reverse(reversed);
@@ -240,16 +246,27 @@ public class PromotionService {
 
     /** Bù trừ khi đơn bị hủy: trả suất flash sale và lượt dùng voucher. */
     void release(long orderId) {
+        BigDecimal item = BigDecimal.ZERO;
+        BigDecimal voucher = BigDecimal.ZERO;
+        Long userId = null;
         for (Redemption r : redemptions.findByOrderIdAndStatus(orderId, Redemption.Status.RESERVED)) {
             if (r.getKind() == Redemption.Kind.FLASH_SALE) {
                 ledger.releaseFlash(r.getRefId(), r.getQuantity());
                 ledger.decrementUsage(PromotionLedger.flashScope(r.getRefId()), r.getUserId(), r.getQuantity());
+                item = item.add(r.getDiscount());
             } else {
                 ledger.releaseVoucher(r.getRefId());
                 ledger.decrementUsage(PromotionLedger.voucherScope(r.getRefId()), r.getUserId(), 1);
+                voucher = voucher.add(r.getDiscount());
             }
+            userId = r.getUserId();
             r.release();
             log.info("Hoàn {} '{}' của đơn #{} bị hủy", r.getKind(), r.getLabel(), orderId);
+        }
+        if (userId != null) {
+            // Analytics trừ lại khoản giảm giá của đơn đã hủy khỏi KPI "giảm giá khuyến mãi"
+            outbox.publish(Topics.PROMOTION_EVENTS, EventTypes.PROMOTION_RELEASED, String.valueOf(orderId),
+                    new PromotionReleased(orderId, userId, whole(item), whole(voucher), whole(item.add(voucher))));
         }
     }
 

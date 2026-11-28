@@ -20,6 +20,7 @@ export function ShopLayout() {
             {user && <NavLink to="/cart">Giỏ hàng</NavLink>}
             {user && <NavLink to="/orders">Đơn hàng</NavLink>}
             {user && !isStaff && <NavLink to="/loyalty">Thành viên</NavLink>}
+            {user && !isStaff && <NavLink to="/support">Hỗ trợ</NavLink>}
             {isStaff && <NavLink to="/admin">Quản trị</NavLink>}
           </nav>
           <div className="nav-right">
@@ -54,18 +55,21 @@ export function ShopLayout() {
 export function AdminLayout() {
   const { hasRole } = useAuth();
   const links: { to: string; label: string; roles: string[] }[] = [
-    { to: '/admin', label: '📊 Dashboard', roles: ['ADMIN', 'ANALYST', 'PRODUCT_MANAGER', 'WAREHOUSE_MANAGER'] },
+    { to: '/admin', label: '📊 Dashboard', roles: ['ADMIN', 'ANALYST', 'PRODUCT_MANAGER', 'WAREHOUSE_MANAGER', 'SUPPORT_AGENT'] },
+    { to: '/admin/support', label: '🎧 Hỗ trợ khách hàng', roles: ['ADMIN', 'SUPPORT_AGENT', 'ANALYST'] },
     { to: '/admin/orders', label: '🧾 Đơn hàng', roles: ['ADMIN', 'WAREHOUSE_MANAGER', 'ANALYST'] },
     { to: '/admin/shipments', label: '🚚 Vận chuyển', roles: ['ADMIN', 'WAREHOUSE_MANAGER', 'ANALYST'] },
     { to: '/admin/fraud', label: '🛡️ Rủi ro & gian lận', roles: ['ADMIN', 'ANALYST'] },
     { to: '/admin/products', label: '📦 Sản phẩm', roles: ['ADMIN', 'PRODUCT_MANAGER'] },
     { to: '/admin/reviews', label: '⭐ Đánh giá & hỏi đáp', roles: ['ADMIN', 'PRODUCT_MANAGER'] },
     { to: '/admin/promotions', label: '🎁 Khuyến mãi', roles: ['ADMIN', 'PRODUCT_MANAGER', 'ANALYST'] },
+    { to: '/admin/recommendations', label: '🧠 Gợi ý sản phẩm', roles: ['ADMIN', 'PRODUCT_MANAGER', 'ANALYST'] },
     { to: '/admin/inventory', label: '🏬 Kho hàng', roles: ['ADMIN', 'WAREHOUSE_MANAGER', 'PRODUCT_MANAGER', 'ANALYST'] },
     { to: '/admin/payments', label: '💳 Thanh toán', roles: ['ADMIN', 'ANALYST'] },
     { to: '/admin/reports', label: '📈 Báo cáo', roles: ['ADMIN', 'ANALYST'] },
     { to: '/admin/users', label: '👥 Tài khoản', roles: ['ADMIN'] },
     { to: '/admin/audit', label: '🔐 Nhật ký kiểm toán', roles: ['ADMIN'] },
+    { to: '/admin/alerts', label: '🚨 Cảnh báo hệ thống', roles: ['ADMIN'] },
     { to: '/admin/simulator', label: '🤖 Khách hàng ảo', roles: ['ADMIN'] },
   ];
   return (
